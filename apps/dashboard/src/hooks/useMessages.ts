@@ -58,10 +58,8 @@ export function useMessages(conversationId: string | null) {
       })
       .on('broadcast', { event: 'typing' }, ({ payload }) => {
         if (payload?.sender_type === 'visitor') {
-          setIsAgentTyping(false)
-          return
+          setIsAgentTyping(payload?.is_typing ?? false)
         }
-        setIsAgentTyping(payload?.is_typing ?? false)
       })
       .subscribe()
 

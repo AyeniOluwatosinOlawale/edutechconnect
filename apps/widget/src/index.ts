@@ -28,6 +28,7 @@ import type { ChatMessage, WorkspaceSettings } from './types'
   } | null = null
 
   let panel: ChatPanel | null = null
+  const subscribedConvIds = new Set<string>()
 
   try {
     const initData = await initWidget({
@@ -66,6 +67,7 @@ import type { ChatMessage, WorkspaceSettings } from './types'
             conversation_id: state.conversationId,
           })
           state.conversationId = res.conversation_id
+
           panel?.appendMessage({
             id: res.message_id,
             sender_type: 'visitor',
@@ -73,9 +75,9 @@ import type { ChatMessage, WorkspaceSettings } from './types'
             content: text,
             created_at: new Date().toISOString(),
           })
-          // Subscribe to conversation channel once we have an id
-          if (!state.conversationId) {
-            state.conversationId = res.conversation_id
+
+          // Subscribe to conversation broadcast channel once we have an id
+          if (!subscribedConvIds.has(res.conversation_id)) {
             subscribeConversation(res.conversation_id, panel!)
           }
         } catch (e) {
@@ -85,11 +87,10 @@ import type { ChatMessage, WorkspaceSettings } from './types'
       onClose: () => {},
       onTyping: (isTyping) => {
         if (!state?.conversationId) return
-        broadcast(
-          `conversation:${state.conversationId}`,
-          'typing',
-          { sender_type: 'visitor', is_typing: isTyping },
-        )
+        broadcast(`conversation:${state.conversationId}`, 'typing', {
+          sender_type: 'visitor',
+          is_typing: isTyping,
+        })
       },
       onHumanRequest: async () => {
         if (!state?.conversationId) return
@@ -109,7 +110,6 @@ import type { ChatMessage, WorkspaceSettings } from './types'
     // Activate AI mode if enabled in workspace settings
     if (state.isAiActive) {
       panel.setAiMode(true)
-      // Show AI greeting if this is a fresh session
       if (!state.conversationId && state.settings.ai_greeting_message) {
         panel.appendMessage({
           id: `greeting-${Date.now()}`,
@@ -121,24 +121,7 @@ import type { ChatMessage, WorkspaceSettings } from './types'
       }
     }
 
-    // Subscribe to incoming agent/bot messages
-    subscribe(`visitor:${state.visitorId}`, (raw) => {
-      const msg = raw as { payload?: { data?: { new?: ChatMessage } } }
-      const newMsg = msg?.payload?.data?.new
-      if (!newMsg) return
-      if (newMsg.sender_type === 'agent' || newMsg.sender_type === 'bot') {
-        panel?.appendMessage(newMsg)
-      }
-      // A system message with 'agent' content signals AI is off
-      if (newMsg.sender_type === 'system') {
-        if (state && state.isAiActive) {
-          state.isAiActive = false
-          panel?.setAiMode(false)
-        }
-      }
-    })
-
-    // Subscribe to conversation channel if we already have one
+    // Subscribe to existing conversation if we already have one
     if (state.conversationId) {
       subscribeConversation(state.conversationId, panel)
     }
@@ -160,25 +143,23 @@ import type { ChatMessage, WorkspaceSettings } from './types'
   }
 
   function subscribeConversation(convId: string, p: ChatPanel) {
-    subscribe(`conversation:${convId}`, (raw) => {
-      const msg = raw as {
-        event?: string
-        payload?: {
-          sender_type?: string
-          is_typing?: boolean
-          data?: { new?: ChatMessage }
+    if (subscribedConvIds.has(convId)) return
+    subscribedConvIds.add(convId)
+
+    subscribe(`conversation:${convId}`, (event, payload) => {
+      if (event === 'typing') {
+        if (payload.sender_type === 'agent') {
+          p.setAgentTyping(payload.is_typing as boolean ?? false)
         }
+        return
       }
-      if (msg.event === 'typing' && msg.payload?.sender_type === 'agent') {
-        p.setAgentTyping(msg.payload.is_typing ?? false)
-      }
-      if (msg.event === 'INSERT') {
-        const newMsg = msg.payload?.data?.new
-        if (!newMsg) return
-        if (newMsg.sender_type === 'agent' || newMsg.sender_type === 'bot') {
-          p.appendMessage(newMsg)
+
+      if (event === 'new_message') {
+        const msg = payload as unknown as ChatMessage
+        if (msg.sender_type === 'agent' || msg.sender_type === 'bot') {
+          p.appendMessage(msg)
         }
-        if (newMsg.sender_type === 'system' && state?.isAiActive) {
+        if (msg.sender_type === 'system' && state?.isAiActive) {
           state.isAiActive = false
           p.setAiMode(false)
         }

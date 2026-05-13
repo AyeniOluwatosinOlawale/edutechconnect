@@ -67,7 +67,7 @@ export function ChatWindow() {
     const content = text.trim()
     setText('')
 
-    await supabase.from('messages').insert({
+    const { data: inserted } = await supabase.from('messages').insert({
       conversation_id: selectedConversationId,
       workspace_id: agent.workspace_id,
       sender_type: 'agent',
@@ -75,13 +75,34 @@ export function ChatWindow() {
       sender_name: agent.display_name,
       content_type: 'text',
       content,
-    })
+    }).select('id, created_at').single()
 
     await supabase
       .from('conversations')
       .update({ status: 'active', assigned_agent_id: agent.id, first_response_at: new Date().toISOString() })
       .eq('id', selectedConversationId)
       .eq('status', 'waiting')
+
+    // Broadcast to widget via Realtime broadcast (bypasses RLS for anon visitor)
+    if (inserted) {
+      const channel = supabase.channel(`conversation:${selectedConversationId}`)
+      channel.subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          channel.send({
+            type: 'broadcast',
+            event: 'new_message',
+            payload: {
+              id: inserted.id,
+              conversation_id: selectedConversationId,
+              sender_type: 'agent',
+              sender_name: agent.display_name,
+              content,
+              created_at: inserted.created_at,
+            },
+          }).finally(() => supabase.removeChannel(channel))
+        }
+      })
+    }
 
     setSending(false)
   }

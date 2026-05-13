@@ -1,74 +1,76 @@
 // Minimal Supabase Realtime client (Phoenix channels over WebSocket)
-// Does NOT import @supabase/supabase-js — keeps bundle tiny.
+// Uses Broadcast (not Postgres Changes) so no RLS issues with anon key.
 
 declare const __SUPABASE_URL__: string
 declare const __SUPABASE_ANON_KEY__: string
 
-type MessageHandler = (payload: unknown) => void
+type BroadcastHandler = (event: string, payload: Record<string, unknown>) => void
 
-interface Subscription {
+interface Chan {
   topic: string
-  handler: MessageHandler
+  handlers: BroadcastHandler[]
+  joined: boolean
 }
 
 let ws: WebSocket | null = null
-let subscriptions: Subscription[] = []
-let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+const chans = new Map<string, Chan>()
+let hbTimer: ReturnType<typeof setInterval> | null = null
 let reconnectDelay = 1000
 let ref = 0
 
-function getRef() {
-  return String(++ref)
-}
+function nextRef() { return String(++ref) }
 
 function send(msg: object) {
-  if (ws?.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(msg))
-  }
+  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg))
 }
 
-function joinTopic(topic: string) {
-  send({ topic, event: 'phx_join', payload: {}, ref: getRef() })
-}
-
-function startHeartbeat() {
-  heartbeatTimer = setInterval(() => {
-    send({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: getRef() })
-  }, 30_000)
+function joinChan(c: Chan) {
+  send({
+    topic: c.topic,
+    event: 'phx_join',
+    payload: { config: { broadcast: { self: false }, presence: { key: '' } } },
+    ref: nextRef(),
+  })
 }
 
 function connect() {
-  const wsUrl = __SUPABASE_URL__
-    .replace('https://', 'wss://')
-    .replace('http://', 'ws://')
-
-  ws = new WebSocket(
-    `${wsUrl}/realtime/v1/websocket?apikey=${__SUPABASE_ANON_KEY__}&vsn=1.0.0`,
-  )
+  const wsUrl = __SUPABASE_URL__.replace('https://', 'wss://').replace('http://', 'ws://')
+  ws = new WebSocket(`${wsUrl}/realtime/v1/websocket?apikey=${__SUPABASE_ANON_KEY__}&vsn=1.0.0`)
 
   ws.onopen = () => {
     reconnectDelay = 1000
-    startHeartbeat()
-    // Re-join all active subscriptions
-    subscriptions.forEach((s) => joinTopic(s.topic))
+    hbTimer = setInterval(() => {
+      send({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: nextRef() })
+    }, 25_000)
+    chans.forEach((c) => joinChan(c))
   }
 
-  ws.onmessage = (event) => {
+  ws.onmessage = (e) => {
     try {
-      const msg = JSON.parse(event.data as string) as {
+      const msg = JSON.parse(e.data as string) as {
         topic: string
         event: string
-        payload: unknown
+        payload: Record<string, unknown>
       }
-      subscriptions
-        .filter((s) => s.topic === msg.topic)
-        .forEach((s) => s.handler(msg))
+      const c = chans.get(msg.topic)
+      if (!c) return
+
+      if (msg.event === 'phx_reply' && (msg.payload as { status?: string }).status === 'ok') {
+        c.joined = true
+        return
+      }
+
+      if (msg.event === 'broadcast') {
+        const evt = (msg.payload as { event?: string }).event ?? ''
+        const payload = (msg.payload as { payload?: Record<string, unknown> }).payload ?? {}
+        c.handlers.forEach((h) => h(evt, payload))
+      }
     } catch {}
   }
 
   ws.onclose = () => {
-    if (heartbeatTimer) clearInterval(heartbeatTimer)
-    // Exponential backoff reconnect, cap at 30s
+    if (hbTimer) clearInterval(hbTimer)
+    chans.forEach((c) => { c.joined = false })
     setTimeout(connect, Math.min(reconnectDelay, 30_000))
     reconnectDelay = Math.min(reconnectDelay * 2, 30_000)
   }
@@ -76,16 +78,34 @@ function connect() {
   ws.onerror = () => ws?.close()
 }
 
-export function subscribe(topic: string, handler: MessageHandler): () => void {
-  if (!ws) connect()
-  subscriptions.push({ topic, handler })
-  if (ws?.readyState === WebSocket.OPEN) joinTopic(topic)
+function getOrCreate(topic: string): Chan {
+  if (!chans.has(topic)) {
+    const c: Chan = { topic, handlers: [], joined: false }
+    chans.set(topic, c)
+    if (!ws) connect()
+    if (ws?.readyState === WebSocket.OPEN) joinChan(c)
+  }
+  return chans.get(topic)!
+}
 
+// Subscribe to broadcast events on a named channel.
+// Returns an unsubscribe function.
+export function subscribe(channelName: string, handler: BroadcastHandler): () => void {
+  const topic = `realtime:${channelName}`
+  const c = getOrCreate(topic)
+  c.handlers.push(handler)
   return () => {
-    subscriptions = subscriptions.filter((s) => !(s.topic === topic && s.handler === handler))
+    c.handlers = c.handlers.filter((h) => h !== handler)
   }
 }
 
-export function broadcast(topic: string, event: string, payload: unknown) {
-  send({ topic, event, payload, ref: getRef() })
+// Send a broadcast event on a named channel.
+export function broadcast(channelName: string, event: string, payload: Record<string, unknown>) {
+  const topic = `realtime:${channelName}`
+  send({
+    topic,
+    event: 'broadcast',
+    payload: { type: 'broadcast', event, payload },
+    ref: nextRef(),
+  })
 }
