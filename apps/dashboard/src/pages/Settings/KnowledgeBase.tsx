@@ -63,11 +63,15 @@ export default function KnowledgeBase() {
 
   const fileRef = useRef<HTMLInputElement>(null)
 
-  // PDF / text upload
-  const [pdfTitle, setPdfTitle] = useState('')
-  const [pdfText, setPdfText] = useState('')
-  const [uploadingPdf, setUploadingPdf] = useState(false)
-  const [pdfFileName, setPdfFileName] = useState('')
+  // Multi-file upload
+  interface FileItem {
+    name: string
+    status: 'queued' | 'extracting' | 'uploading' | 'done' | 'error'
+    chunks?: number
+    error?: string
+  }
+  const [fileItems, setFileItems] = useState<FileItem[]>([])
+  const [isDragging, setIsDragging] = useState(false)
 
   async function getAuthHeader() {
     const { data: { session } } = await supabase.auth.getSession()
@@ -165,46 +169,73 @@ export default function KnowledgeBase() {
     }
   }
 
-  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setPdfFileName(file.name)
-    if (!pdfTitle) setPdfTitle(file.name.replace(/\.[^.]+$/, ''))
-
-    if (file.name.endsWith('.docx')) {
-      const arrayBuffer = await file.arrayBuffer()
-      const result = await mammoth.extractRawText({ arrayBuffer })
-      setPdfText(result.value)
-    } else {
-      const text = await file.text()
-      setPdfText(text)
-    }
+  function setFileStatus(name: string, patch: Partial<FileItem>) {
+    setFileItems((prev) => prev.map((f) => f.name === name ? { ...f, ...patch } : f))
   }
 
-  async function addPdf(e: FormEvent) {
-    e.preventDefault()
-    if (!agent || !pdfTitle.trim() || !pdfText.trim()) return
-    setUploadingPdf(true)
-    try {
-      const authHeader = await getAuthHeader()
-      await fetch(`${FUNCTIONS_URL}/kb-ingest`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: authHeader },
-        body: JSON.stringify({
-          workspace_id: agent.workspace_id,
-          source_type: 'pdf',
-          title: pdfTitle,
-          content: pdfText,
-        }),
-      })
-      setPdfTitle('')
-      setPdfText('')
-      setPdfFileName('')
-      if (fileRef.current) fileRef.current.value = ''
-      loadDocs()
-    } finally {
-      setUploadingPdf(false)
+  async function processFiles(files: File[]) {
+    if (!agent) return
+    const newItems: FileItem[] = files.map((f) => ({ name: f.name, status: 'queued' as const }))
+    setFileItems((prev) => {
+      const existing = new Set(prev.map((f) => f.name))
+      return [...prev, ...newItems.filter((f) => !existing.has(f.name))]
+    })
+
+    const authHeader = await getAuthHeader()
+
+    for (const file of files) {
+      // Extract text
+      setFileStatus(file.name, { status: 'extracting' })
+      let text = ''
+      try {
+        if (file.name.endsWith('.docx')) {
+          const buf = await file.arrayBuffer()
+          const result = await mammoth.extractRawText({ arrayBuffer: buf })
+          text = result.value
+        } else {
+          text = await file.text()
+        }
+      } catch {
+        setFileStatus(file.name, { status: 'error', error: 'Failed to read file' })
+        continue
+      }
+
+      // Ingest to vector DB
+      setFileStatus(file.name, { status: 'uploading' })
+      try {
+        const res = await fetch(`${FUNCTIONS_URL}/kb-ingest`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+          body: JSON.stringify({
+            workspace_id: agent.workspace_id,
+            source_type: 'pdf',
+            title: file.name.replace(/\.[^.]+$/, ''),
+            content: text,
+          }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? 'Ingest failed')
+        setFileStatus(file.name, { status: 'done', chunks: data.chunk_count })
+      } catch (e) {
+        setFileStatus(file.name, { status: 'error', error: String(e) })
+      }
     }
+    loadDocs()
+  }
+
+  function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? [])
+    if (files.length) processFiles(files)
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault()
+    setIsDragging(false)
+    const files = Array.from(e.dataTransfer.files).filter((f) =>
+      /\.(docx|txt|md|csv|rtf)$/i.test(f.name)
+    )
+    if (files.length) processFiles(files)
   }
 
   async function deleteDoc(id: string) {
@@ -356,48 +387,82 @@ export default function KnowledgeBase() {
         <DocList docs={urlDocs} onDelete={deleteDoc} loading={loading} />
       </section>
 
-      {/* ── PDF Documents ── */}
+      {/* ── Documents ── */}
       <section>
         <div className="flex items-center gap-2 mb-4">
           <FileText size={15} className="text-slate-400" />
-          <h2 className="text-base font-semibold text-slate-800">PDF Documents</h2>
+          <h2 className="text-base font-semibold text-slate-800">Documents</h2>
           <span className="text-xs text-slate-400 ml-auto">{pdfDocs.length} docs</span>
         </div>
-        <form onSubmit={addPdf} className="bg-white border border-slate-200 rounded-xl p-4 mb-4 space-y-3">
+
+        {/* Drop zone */}
+        <div
+          onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={handleDrop}
+          onClick={() => fileRef.current?.click()}
+          className={`bg-white border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors mb-4 ${
+            isDragging ? 'border-violet-400 bg-violet-50' : 'border-slate-200 hover:border-violet-300'
+          }`}
+        >
           <input
-            value={pdfTitle}
-            onChange={(e) => setPdfTitle(e.target.value)}
-            placeholder="Document title"
-            required
-            className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-violet-400"
+            ref={fileRef}
+            type="file"
+            accept=".docx,.txt,.md,.csv,.rtf"
+            multiple
+            className="hidden"
+            onChange={handleFileInput}
           />
-          {/* File picker — reads text content of .txt/.md or raw text from any file */}
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 cursor-pointer bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-600 transition-colors">
-              <FileText size={14} />
-              {pdfFileName || 'Choose file (.docx, .txt, .md, .csv)'}
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".txt,.md,.csv,.rtf,.docx"
-                className="hidden"
-                onChange={handleFileSelect}
-              />
-            </label>
-            <span className="text-xs text-slate-400">or paste text below</span>
+          <FileText size={28} className="mx-auto mb-2 text-slate-300" />
+          <p className="text-sm font-medium text-slate-600">Drop files here or <span className="text-violet-500">click to browse</span></p>
+          <p className="text-xs text-slate-400 mt-1">Supports .docx, .txt, .md, .csv — multiple files at once</p>
+        </div>
+
+        {/* Per-file status list */}
+        {fileItems.length > 0 && (
+          <div className="flex flex-col gap-2 mb-4">
+            {fileItems.map((f) => (
+              <div key={f.name} className="bg-white border border-slate-200 rounded-xl px-4 py-3 flex items-center gap-3">
+                <FileText size={14} className="text-slate-400 flex-shrink-0" />
+                <span className="text-sm text-slate-700 flex-1 truncate">{f.name}</span>
+                {f.status === 'queued' && (
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">Queued</span>
+                )}
+                {f.status === 'extracting' && (
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse inline-block" />
+                    Extracting text…
+                  </span>
+                )}
+                {f.status === 'uploading' && (
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse inline-block" />
+                    Converting to vectors…
+                  </span>
+                )}
+                {f.status === 'done' && (
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 flex items-center gap-1">
+                    ✓ Done — {f.chunks} chunks
+                  </span>
+                )}
+                {f.status === 'error' && (
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-red-100 text-red-600 truncate max-w-[200px]">
+                    ✕ {f.error}
+                  </span>
+                )}
+              </div>
+            ))}
+            {fileItems.some((f) => f.status === 'done' || f.status === 'error') && (
+              <button
+                onClick={() => setFileItems([])}
+                className="text-xs text-slate-400 hover:text-slate-600 self-end mt-1"
+              >
+                Clear list
+              </button>
+            )}
           </div>
-          <textarea
-            value={pdfText}
-            onChange={(e) => setPdfText(e.target.value)}
-            placeholder="Paste document text content here…"
-            required
-            rows={4}
-            className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-violet-400 resize-none"
-          />
-          <button type="submit" disabled={uploadingPdf} className="flex items-center gap-2 bg-violet-500 hover:bg-violet-600 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors disabled:opacity-60">
-            <Plus size={14} /> {uploadingPdf ? 'Ingesting…' : 'Add Document'}
-          </button>
-        </form>
+        )}
+
         <DocList docs={pdfDocs} onDelete={deleteDoc} loading={false} />
       </section>
 
