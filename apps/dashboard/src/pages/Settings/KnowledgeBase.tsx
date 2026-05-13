@@ -62,6 +62,12 @@ export default function KnowledgeBase() {
 
   const fileRef = useRef<HTMLInputElement>(null)
 
+  // PDF / text upload
+  const [pdfTitle, setPdfTitle] = useState('')
+  const [pdfText, setPdfText] = useState('')
+  const [uploadingPdf, setUploadingPdf] = useState(false)
+  const [pdfFileName, setPdfFileName] = useState('')
+
   async function getAuthHeader() {
     const { data: { session } } = await supabase.auth.getSession()
     return `Bearer ${session?.access_token}`
@@ -155,6 +161,41 @@ export default function KnowledgeBase() {
       loadDocs()
     } finally {
       setAddingUrl(false)
+    }
+  }
+
+  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setPdfFileName(file.name)
+    if (!pdfTitle) setPdfTitle(file.name.replace(/\.[^.]+$/, ''))
+    const text = await file.text()
+    setPdfText(text)
+  }
+
+  async function addPdf(e: FormEvent) {
+    e.preventDefault()
+    if (!agent || !pdfTitle.trim() || !pdfText.trim()) return
+    setUploadingPdf(true)
+    try {
+      const authHeader = await getAuthHeader()
+      await fetch(`${FUNCTIONS_URL}/kb-ingest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+        body: JSON.stringify({
+          workspace_id: agent.workspace_id,
+          source_type: 'pdf',
+          title: pdfTitle,
+          content: pdfText,
+        }),
+      })
+      setPdfTitle('')
+      setPdfText('')
+      setPdfFileName('')
+      if (fileRef.current) fileRef.current.value = ''
+      loadDocs()
+    } finally {
+      setUploadingPdf(false)
     }
   }
 
@@ -314,9 +355,41 @@ export default function KnowledgeBase() {
           <h2 className="text-base font-semibold text-slate-800">PDF Documents</h2>
           <span className="text-xs text-slate-400 ml-auto">{pdfDocs.length} docs</span>
         </div>
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-700">
-          PDF upload requires Supabase Storage integration. Extract text from your PDF and paste it as a FAQ entry, or contact support to enable PDF uploads.
-        </div>
+        <form onSubmit={addPdf} className="bg-white border border-slate-200 rounded-xl p-4 mb-4 space-y-3">
+          <input
+            value={pdfTitle}
+            onChange={(e) => setPdfTitle(e.target.value)}
+            placeholder="Document title"
+            required
+            className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-violet-400"
+          />
+          {/* File picker — reads text content of .txt/.md or raw text from any file */}
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 cursor-pointer bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-600 transition-colors">
+              <FileText size={14} />
+              {pdfFileName || 'Choose file (.txt, .md, .csv)'}
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".txt,.md,.csv,.rtf"
+                className="hidden"
+                onChange={handleFileSelect}
+              />
+            </label>
+            <span className="text-xs text-slate-400">or paste text below</span>
+          </div>
+          <textarea
+            value={pdfText}
+            onChange={(e) => setPdfText(e.target.value)}
+            placeholder="Paste document text content here…"
+            required
+            rows={4}
+            className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-violet-400 resize-none"
+          />
+          <button type="submit" disabled={uploadingPdf} className="flex items-center gap-2 bg-violet-500 hover:bg-violet-600 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors disabled:opacity-60">
+            <Plus size={14} /> {uploadingPdf ? 'Ingesting…' : 'Add Document'}
+          </button>
+        </form>
         <DocList docs={pdfDocs} onDelete={deleteDoc} loading={false} />
       </section>
 
