@@ -38,10 +38,29 @@ If the answer is not clearly in the context, say:
 "I don't have that information — let me connect you with a human agent."
 Keep answers concise (under 150 words). Be friendly and professional.`
 
+interface AgentProfile { id: string; workspace_id: string; display_name: string; role: string; status: string }
+
 export default function KnowledgeBase() {
-  const { agent } = useAuthStore()
+  const { agent: storeAgent } = useAuthStore()
+  const [agent, setLocalAgent] = useState<AgentProfile | null>(storeAgent)
+  const [agentError, setAgentError] = useState<string | null>(null)
   const [docs, setDocs] = useState<KbDoc[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Fetch agent directly if store didn't load it
+  useEffect(() => {
+    if (storeAgent) { setLocalAgent(storeAgent); return }
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session?.user) { setAgentError('Not logged in'); setLoading(false); return }
+      const { data, error } = await supabase.from('agents').select('*').eq('id', session.user.id).single()
+      if (error || !data) {
+        setAgentError(`No agent profile found for user ${session.user.email}. Run the SQL fix in Supabase.`)
+        setLoading(false)
+      } else {
+        setLocalAgent(data as AgentProfile)
+      }
+    })
+  }, [storeAgent])
 
   // AI settings
   const [aiEnabled, setAiEnabled] = useState(false)
@@ -263,6 +282,24 @@ export default function KnowledgeBase() {
   const pdfDocs   = docs.filter((d) => d.source_type === 'pdf')
   const urlDocs   = docs.filter((d) => d.source_type === 'url')
   const transDocs = docs.filter((d) => d.source_type === 'transcript')
+
+  if (agentError) {
+    return (
+      <div className="max-w-xl">
+        <div className="bg-red-50 border border-red-200 rounded-xl p-5">
+          <p className="text-sm font-semibold text-red-700 mb-1">Agent profile not found</p>
+          <p className="text-sm text-red-600 mb-3">{agentError}</p>
+          <p className="text-xs text-slate-500 font-mono bg-white border border-slate-200 rounded p-3">
+            INSERT INTO public.agents (id, workspace_id, display_name, role, status)<br/>
+            SELECT u.id, '00000000-0000-0000-0000-000000000001',<br/>
+            &nbsp;&nbsp;split_part(u.email,'@',1), 'owner', 'online'<br/>
+            FROM auth.users u LEFT JOIN public.agents a ON a.id=u.id<br/>
+            WHERE a.id IS NULL ON CONFLICT (id) DO NOTHING;
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="max-w-3xl space-y-10">
