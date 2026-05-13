@@ -10,6 +10,14 @@ export interface WorkspaceSettings {
   show_agent_names?: boolean
   ai_enabled?: boolean
   ai_greeting_message?: string
+  prechat_enabled?: boolean
+  prechat_subtitle?: string
+}
+
+export interface PreChatData {
+  name: string
+  email: string
+  phone: string
 }
 
 export interface InitResponse {
@@ -17,6 +25,7 @@ export interface InitResponse {
   visitor_id: string
   workspace_id: string
   conversation_id: string | null
+  workspace_name: string
   workspace_settings: WorkspaceSettings
 }
 

@@ -13,7 +13,7 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json()
-    const { visitor_token, workspace_id, content, conversation_id } = body
+    const { visitor_token, workspace_id, content, conversation_id, visitor_name, visitor_email, visitor_phone } = body
 
     if (!visitor_token || !workspace_id || !content?.trim()) {
       return error('visitor_token, workspace_id, and content are required')
@@ -33,6 +33,18 @@ Deno.serve(async (req) => {
       .single()
 
     if (!visitor) return error('Invalid visitor token', 401)
+
+    // Update visitor details from pre-chat form if provided
+    if (visitor_name || visitor_email || visitor_phone) {
+      const updates: Record<string, string> = {}
+      if (visitor_name) updates.name = visitor_name
+      if (visitor_email) updates.email = visitor_email
+      if (visitor_phone) updates.phone = visitor_phone
+      await supabase.from('visitors').update(updates).eq('id', visitor.id)
+      // Merge into local visitor object so Zoho lead uses the new details
+      if (visitor_name) visitor.name = visitor_name
+      if (visitor_email) visitor.email = visitor_email
+    }
 
     // Fetch workspace settings to check AI config
     const { data: workspace } = await supabase

@@ -31,6 +31,9 @@ export async function sendMessage(params: {
   workspace_id: string
   content: string
   conversation_id: string | null
+  visitor_name?: string
+  visitor_email?: string
+  visitor_phone?: string
 }): Promise<SendMessageResponse> {
   return post<SendMessageResponse>('visitor-message', params)
 }

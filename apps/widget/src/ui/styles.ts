@@ -252,6 +252,60 @@ export function buildStyles(brandColor: string): string {
     }
     .edu-human-btn:hover { background: #ede9fe; }
 
+    /* ── Pre-chat form ── */
+    .edu-prechat {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 16px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .edu-prechat-intro {
+      color: #475569;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .edu-field {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .edu-field label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #374151;
+    }
+    .edu-field input {
+      border: 1.5px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 9px 11px;
+      font-size: 14px;
+      font-family: inherit;
+      outline: none;
+      color: #1e293b;
+      transition: border-color 0.15s;
+      background: #fff;
+    }
+    .edu-field input:focus { border-color: ${brandColor}; }
+    .edu-field input::placeholder { color: #94a3b8; }
+    .edu-start-btn {
+      background: ${brandColor};
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 4px;
+      font-family: inherit;
+      transition: opacity 0.15s;
+    }
+    .edu-start-btn:hover { opacity: 0.9; }
+    .edu-start-btn:disabled { opacity: 0.5; cursor: default; }
+
     .edu-empty {
       flex: 1;
       display: flex;

@@ -18,7 +18,7 @@ Deno.serve(async (req) => {
     // Resolve workspace from widget_key
     const { data: workspace, error: wsErr } = await supabase
       .from('workspaces')
-      .select('id, settings')
+      .select('id, name, settings')
       .eq('widget_key', workspaceKey)
       .single()
 
@@ -92,6 +92,7 @@ Deno.serve(async (req) => {
       visitor_id: visitorId,
       workspace_id: workspace.id,
       conversation_id: activeConv?.id ?? null,
+      workspace_name: workspace.name,
       workspace_settings: workspace.settings,
     })
   } catch (e) {
