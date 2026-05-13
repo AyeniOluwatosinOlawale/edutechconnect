@@ -1,12 +1,11 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders, handleOptions, json, error } from '../_shared/cors.ts'
 import { createLead, searchLeads } from '../_shared/zoho.ts'
-import { createEmbedding, chatCompletion, llmWantsEscalation } from '../_shared/openai.ts'
+import { createEmbedding, chatCompletion } from '../_shared/openai.ts'
 
-const DEFAULT_SYSTEM_PROMPT = `You are a helpful support assistant.
+const DEFAULT_SYSTEM_PROMPT = `You are a helpful support assistant for an education platform.
 Answer the visitor's question using ONLY the context provided.
-If the answer is not clearly in the context, say:
-"I don't have that information — let me connect you with a human agent."
+If the answer is not in the context, say you are not sure and invite them to ask about programs, courses, fees, or enrollment.
 Keep answers concise (under 150 words). Be friendly and professional.`
 
 Deno.serve(async (req) => {
@@ -173,13 +172,12 @@ Deno.serve(async (req) => {
               chunk_ids_used: chunkIds,
             }
           } else {
-            // Step 3: GPT-4o completion
+            // Step 3: GPT-4o completion — always use the reply, never auto-escalate
             const context = (chunks as Array<{ content: string }>).map((c) => c.content).join('\n---\n')
             const completion = await chatCompletion({ systemPrompt, userMessage: content.trim(), context, history })
-            const shouldEscalate = llmWantsEscalation(completion.content)
             rag = {
-              reply: shouldEscalate ? null : completion.content,
-              should_escalate: shouldEscalate,
+              reply: completion.content,
+              should_escalate: false,
               top_score: topScore,
               chunk_ids_used: chunkIds,
             }
