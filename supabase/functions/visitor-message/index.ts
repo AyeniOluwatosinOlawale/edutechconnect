@@ -165,7 +165,13 @@ Deno.serve(async (req) => {
           const chunkIds = (chunks ?? []).map((c: { id: string }) => c.id)
 
           if (matchErr || !chunks || chunks.length === 0 || topScore < confidenceThreshold) {
-            rag = { reply: null, should_escalate: true, top_score: topScore, chunk_ids_used: chunkIds }
+            // Low confidence: send a soft fallback but KEEP bot active so visitor can ask again
+            rag = {
+              reply: "I'm not sure I have information on that. Feel free to ask about our programs, courses, or enrollment process!",
+              should_escalate: false,
+              top_score: topScore,
+              chunk_ids_used: chunkIds,
+            }
           } else {
             // Step 3: GPT-4o completion
             const context = (chunks as Array<{ content: string }>).map((c) => c.content).join('\n---\n')
