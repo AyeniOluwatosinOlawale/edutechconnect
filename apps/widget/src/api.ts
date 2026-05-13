@@ -1,11 +1,15 @@
 import type { InitResponse, SendMessageResponse } from './types'
 
 declare const __FUNCTIONS_URL__: string
+declare const __SUPABASE_ANON_KEY__: string
 
 async function post<T>(path: string, body: Record<string, unknown>): Promise<T> {
   const res = await fetch(`${__FUNCTIONS_URL__}/${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${__SUPABASE_ANON_KEY__}`,
+    },
     body: JSON.stringify(body),
   })
   if (!res.ok) throw new Error(`${path} failed: ${res.status}`)
@@ -46,7 +50,10 @@ export async function updateSession(params: {
   // Fire-and-forget — intentionally no await
   fetch(`${__FUNCTIONS_URL__}/widget-heartbeat`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${__SUPABASE_ANON_KEY__}`,
+    },
     body: JSON.stringify(params),
   }).catch(() => {})
 }
