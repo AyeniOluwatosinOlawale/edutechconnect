@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders, handleOptions, json, error } from '../_shared/cors.ts'
 import { createLead, searchLeads } from '../_shared/zoho.ts'
+import { createEmbedding, chatCompletion, llmWantsEscalation } from '../_shared/openai.ts'
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful support assistant.
 Answer the visitor's question using ONLY the context provided.
@@ -142,25 +143,45 @@ Deno.serve(async (req) => {
             content: m.content,
           }))
 
-        // Call rag-query via internal function invocation
-        const ragResult = await supabase.functions.invoke('rag-query', {
-          body: {
-            workspace_id,
-            conversation_id: convId,
-            visitor_message: content.trim(),
-            history,
-            confidence_threshold: (settings.ai_confidence_threshold as number) ?? 0.75,
-            max_chunks: (settings.ai_max_context_chunks as number) ?? 4,
-            system_prompt: (settings.ai_system_prompt as string) ?? DEFAULT_SYSTEM_PROMPT,
-          },
-        })
+        // ── Inline RAG pipeline ──────────────────────────────────────────────
+        const confidenceThreshold = (settings.ai_confidence_threshold as number) ?? 0.75
+        const maxChunks = (settings.ai_max_context_chunks as number) ?? 4
+        const systemPrompt = (settings.ai_system_prompt as string) ?? DEFAULT_SYSTEM_PROMPT
 
-        const rag = ragResult.data as {
-          reply: string | null
-          should_escalate: boolean
-          top_score: number
-          chunk_ids_used: string[]
-        } | null
+        let rag: { reply: string | null; should_escalate: boolean; top_score: number; chunk_ids_used: string[] } | null = null
+        try {
+          // Step 1: embed visitor query
+          const queryEmbedding = await createEmbedding(content.trim())
+
+          // Step 2: vector similarity search
+          const { data: chunks, error: matchErr } = await supabase.rpc('match_chunks', {
+            query_embedding: queryEmbedding,
+            p_workspace_id: workspace_id,
+            match_threshold: confidenceThreshold,
+            match_count: maxChunks,
+          })
+
+          const topScore = chunks?.[0]?.similarity ?? 0
+          const chunkIds = (chunks ?? []).map((c: { id: string }) => c.id)
+
+          if (matchErr || !chunks || chunks.length === 0 || topScore < confidenceThreshold) {
+            rag = { reply: null, should_escalate: true, top_score: topScore, chunk_ids_used: chunkIds }
+          } else {
+            // Step 3: GPT-4o completion
+            const context = (chunks as Array<{ content: string }>).map((c) => c.content).join('\n---\n')
+            const completion = await chatCompletion({ systemPrompt, userMessage: content.trim(), context, history })
+            const shouldEscalate = llmWantsEscalation(completion.content)
+            rag = {
+              reply: shouldEscalate ? null : completion.content,
+              should_escalate: shouldEscalate,
+              top_score: topScore,
+              chunk_ids_used: chunkIds,
+            }
+          }
+        } catch (ragErr) {
+          console.error('[visitor-message] RAG pipeline error:', ragErr)
+          rag = null
+        }
 
         if (!rag || rag.should_escalate || !rag.reply) {
           // Escalate to human
