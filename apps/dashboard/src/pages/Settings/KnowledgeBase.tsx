@@ -1,4 +1,5 @@
 import { useEffect, useState, FormEvent, useRef } from 'react'
+import mammoth from 'mammoth'
 import { Plus, Trash2, RefreshCw, Globe, FileText, MessageSquare, HelpCircle, Sparkles } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuthStore } from '../../stores/authStore'
@@ -169,8 +170,15 @@ export default function KnowledgeBase() {
     if (!file) return
     setPdfFileName(file.name)
     if (!pdfTitle) setPdfTitle(file.name.replace(/\.[^.]+$/, ''))
-    const text = await file.text()
-    setPdfText(text)
+
+    if (file.name.endsWith('.docx')) {
+      const arrayBuffer = await file.arrayBuffer()
+      const result = await mammoth.extractRawText({ arrayBuffer })
+      setPdfText(result.value)
+    } else {
+      const text = await file.text()
+      setPdfText(text)
+    }
   }
 
   async function addPdf(e: FormEvent) {
@@ -367,11 +375,11 @@ export default function KnowledgeBase() {
           <div className="flex items-center gap-3">
             <label className="flex items-center gap-2 cursor-pointer bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-600 transition-colors">
               <FileText size={14} />
-              {pdfFileName || 'Choose file (.txt, .md, .csv)'}
+              {pdfFileName || 'Choose file (.docx, .txt, .md, .csv)'}
               <input
                 ref={fileRef}
                 type="file"
-                accept=".txt,.md,.csv,.rtf"
+                accept=".txt,.md,.csv,.rtf,.docx"
                 className="hidden"
                 onChange={handleFileSelect}
               />
