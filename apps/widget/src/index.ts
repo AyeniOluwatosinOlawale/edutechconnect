@@ -90,6 +90,17 @@ import type { ChatMessage, PreChatData } from './types'
             if (!subscribedConvIds.has(res.conversation_id)) {
               subscribeConversation(res.conversation_id, panel!)
             }
+
+            // Render bot reply from HTTP response to avoid race with realtime broadcast
+            if (res.bot_reply) {
+              panel?.appendMessage({
+                id: res.bot_reply.id,
+                sender_type: 'bot',
+                sender_name: 'AI Assistant',
+                content: res.bot_reply.content,
+                created_at: res.bot_reply.created_at,
+              })
+            }
           } catch (e) {
             console.error('[EduChat] Failed to send message', e)
           }

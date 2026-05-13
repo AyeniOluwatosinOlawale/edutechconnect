@@ -58,6 +58,7 @@ Deno.serve(async (req) => {
 
     let convId = conversation_id
     let isNewConversation = false
+    let botReply: { id: string; content: string; created_at: string } | null = null
 
     // Create conversation if none exists
     if (!convId) {
@@ -170,11 +171,21 @@ Deno.serve(async (req) => {
             last_top_score: rag?.top_score ?? 0,
           }).eq('conversation_id', convId)
 
-          await supabase.from('messages').insert({
+          const { data: sysMsg } = await supabase.from('messages').insert({
             conversation_id: convId,
             workspace_id,
             sender_type: 'system',
             content: 'Connecting you with a human agent…',
+          }).select('id, created_at').single()
+
+          // Broadcast system message to widget
+          await broadcastMessage(workspace_id, convId, {
+            id: sysMsg?.id ?? crypto.randomUUID(),
+            conversation_id: convId,
+            sender_type: 'system',
+            sender_name: null,
+            content: 'Connecting you with a human agent…',
+            created_at: sysMsg?.created_at ?? new Date().toISOString(),
           })
 
           // Now notify agents
@@ -183,13 +194,28 @@ Deno.serve(async (req) => {
           ]).catch(console.error)
         } else {
           // Insert bot reply
-          await supabase.from('messages').insert({
+          const { data: botMsg } = await supabase.from('messages').insert({
             conversation_id: convId,
             workspace_id,
             sender_type: 'bot',
             sender_name: 'AI Assistant',
             content_type: 'text',
             content: rag.reply,
+          }).select('id, created_at').single()
+
+          const botMsgId = botMsg?.id ?? crypto.randomUUID()
+          const botMsgAt = botMsg?.created_at ?? new Date().toISOString()
+
+          botReply = { id: botMsgId, content: rag.reply, created_at: botMsgAt }
+
+          // Broadcast bot reply to widget immediately
+          await broadcastMessage(workspace_id, convId, {
+            id: botMsgId,
+            conversation_id: convId,
+            sender_type: 'bot',
+            sender_name: 'AI Assistant',
+            content: rag.reply,
+            created_at: botMsgAt,
           })
 
           // Update AI state with context used
@@ -197,17 +223,16 @@ Deno.serve(async (req) => {
             last_chunk_ids: rag.chunk_ids_used,
             last_top_score: rag.top_score,
           }).eq('conversation_id', convId)
-
-          // Increment reply count
-          await supabase.from('conversations').update({
-            ai_reply_count: supabase.rpc('increment_ai_reply_count', { conv_id: convId }),
-          }).eq('id', convId)
         }
       }
     }
     // ── END RAG ─────────────────────────────────────────────────────────────
 
-    return json({ message_id: message!.id, conversation_id: convId })
+    return json({
+      message_id: message!.id,
+      conversation_id: convId,
+      ...(botReply ? { bot_reply: botReply } : {}),
+    })
   } catch (e) {
     console.error('visitor-message error:', e)
     return error('Internal server error', 500)
@@ -230,6 +255,30 @@ async function handleZohoLead(
     Lead_Source_Channel: 'chatbot',
     Description: `Chat conversation ID: ${convId}`,
   })
+}
+
+async function broadcastMessage(
+  workspaceId: string,
+  convId: string,
+  payload: Record<string, unknown>,
+) {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+  await fetch(`${supabaseUrl}/realtime/v1/api/broadcast`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': serviceKey,
+      'Authorization': `Bearer ${serviceKey}`,
+    },
+    body: JSON.stringify({
+      messages: [{
+        topic: `conversation:${convId}`,
+        event: 'new_message',
+        payload,
+      }],
+    }),
+  }).catch(console.error)
 }
 
 async function notifyAgents(
