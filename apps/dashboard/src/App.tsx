@@ -22,43 +22,44 @@ function RequireAuth({ children }: { children: React.ReactElement }) {
   return children
 }
 
+
 export default function App() {
   const { setUser, setAgent, setLoading } = useAuthStore()
 
   useEffect(() => {
+    const timeout = setTimeout(() => setLoading(false), 3000)
+
+    async function loadAgent(userId: string) {
+      try {
+        const { data } = await Promise.race([
+          supabase.from('agents').select('*').eq('id', userId).single(),
+          new Promise<{ data: null }>((resolve) => setTimeout(() => resolve({ data: null }), 2500)),
+        ])
+        setAgent(data)
+      } catch {
+        setAgent(null)
+      }
+    }
+
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       setUser(session?.user ?? null)
-      if (session?.user) {
-        try {
-          const { data } = await supabase
-            .from('agents')
-            .select('*')
-            .eq('id', session.user.id)
-            .single()
-          setAgent(data)
-        } catch {
-          setAgent(null)
-        }
-      }
+      if (session?.user) await loadAgent(session.user.id)
+      clearTimeout(timeout)
       setLoading(false)
     })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setUser(session?.user ?? null)
       if (session?.user) {
-        try {
-          const { data } = await supabase.from('agents').select('*').eq('id', session.user.id).single()
-          setAgent(data)
-        } catch {
-          setAgent(null)
-        }
+        await loadAgent(session.user.id)
       } else {
         setAgent(null)
       }
+      clearTimeout(timeout)
       setLoading(false)
     })
 
-    return () => subscription.unsubscribe()
+    return () => { subscription.unsubscribe(); clearTimeout(timeout) }
   }, [setUser, setAgent, setLoading])
 
   return (
