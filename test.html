@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>EduChat Widget Test</title>
+  <style>
+    body { font-family: sans-serif; max-width: 800px; margin: 80px auto; padding: 0 24px; color: #334155; }
+    h1 { font-size: 24px; }
+    p { color: #64748b; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <h1>Widget Integration Test</h1>
+  <p>This page is for testing the EduTechConnect chat widget locally.</p>
+  <p>The chat bubble should appear in the bottom-right corner. Click it to open the chat panel.</p>
+  <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>
+
+  <!-- Widget snippet (replace workspaceKey with your real key) -->
+  <script>
+    window.EduChatConfig = {
+      workspaceKey: 'wk_demo_edutechconnect'
+    };
+  </script>
+  <script async src="http://localhost:5173/widget.js"></script>
+</body>
+</html>

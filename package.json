@@ -1,0 +1,20 @@
+{
+  "name": "edutechconnect-chat",
+  "version": "1.0.0",
+  "private": true,
+  "description": "tawk.to-style live chat platform for EduTechConnect",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.3"
+  }
+}
