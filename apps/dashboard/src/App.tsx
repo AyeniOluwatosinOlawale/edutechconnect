@@ -29,12 +29,16 @@ export default function App() {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       setUser(session?.user ?? null)
       if (session?.user) {
-        const { data } = await supabase
-          .from('agents')
-          .select('*')
-          .eq('id', session.user.id)
-          .single()
-        setAgent(data)
+        try {
+          const { data } = await supabase
+            .from('agents')
+            .select('*')
+            .eq('id', session.user.id)
+            .single()
+          setAgent(data)
+        } catch {
+          setAgent(null)
+        }
       }
       setLoading(false)
     })
@@ -42,11 +46,16 @@ export default function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setUser(session?.user ?? null)
       if (session?.user) {
-        const { data } = await supabase.from('agents').select('*').eq('id', session.user.id).single()
-        setAgent(data)
+        try {
+          const { data } = await supabase.from('agents').select('*').eq('id', session.user.id).single()
+          setAgent(data)
+        } catch {
+          setAgent(null)
+        }
       } else {
         setAgent(null)
       }
+      setLoading(false)
     })
 
     return () => subscription.unsubscribe()
