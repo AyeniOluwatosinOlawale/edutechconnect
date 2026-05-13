@@ -73,9 +73,14 @@ export default function KnowledgeBase() {
   const [fileItems, setFileItems] = useState<FileItem[]>([])
   const [isDragging, setIsDragging] = useState(false)
 
-  async function getAuthHeader() {
+  async function getAuthHeader(): Promise<string> {
     const { data: { session } } = await supabase.auth.getSession()
-    return `Bearer ${session?.access_token}`
+    if (!session?.access_token) {
+      // Token might have expired — try refreshing
+      const { data: { session: fresh } } = await supabase.auth.refreshSession()
+      return `Bearer ${fresh?.access_token ?? ''}`
+    }
+    return `Bearer ${session.access_token}`
   }
 
   useEffect(() => {
@@ -128,7 +133,7 @@ export default function KnowledgeBase() {
     setAddingFaq(true)
     try {
       const authHeader = await getAuthHeader()
-      await fetch(`${FUNCTIONS_URL}/kb-ingest`, {
+      const res = await fetch(`${FUNCTIONS_URL}/kb-ingest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: authHeader },
         body: JSON.stringify({
@@ -138,6 +143,12 @@ export default function KnowledgeBase() {
           content: `Q: ${faqQ}\nA: ${faqA}`,
         }),
       })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as Record<string, unknown>
+        console.error('[kb-ingest faq]', res.status, err)
+        alert(`FAQ ingest failed (${res.status}): ${(err.error as string) ?? 'Unknown error'}`)
+        return
+      }
       setFaqQ('')
       setFaqA('')
       loadDocs()
@@ -213,11 +224,16 @@ export default function KnowledgeBase() {
             content: text,
           }),
         })
-        const data = await res.json()
-        if (!res.ok) throw new Error(data.error ?? 'Ingest failed')
-        setFileStatus(file.name, { status: 'done', chunks: data.chunk_count })
+        let data: Record<string, unknown> = {}
+        try { data = await res.json() } catch { /* non-JSON response */ }
+        if (!res.ok) {
+          const msg = (data.error as string) ?? `HTTP ${res.status}`
+          console.error('[kb-ingest] failed', res.status, data)
+          throw new Error(msg)
+        }
+        setFileStatus(file.name, { status: 'done', chunks: data.chunk_count as number })
       } catch (e) {
-        setFileStatus(file.name, { status: 'error', error: String(e) })
+        setFileStatus(file.name, { status: 'error', error: e instanceof Error ? e.message : String(e) })
       }
     }
     loadDocs()
@@ -446,7 +462,7 @@ export default function KnowledgeBase() {
                   </span>
                 )}
                 {f.status === 'error' && (
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-red-100 text-red-600 truncate max-w-[200px]">
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-red-100 text-red-600 max-w-xs break-all" title={f.error}>
                     ✕ {f.error}
                   </span>
                 )}
