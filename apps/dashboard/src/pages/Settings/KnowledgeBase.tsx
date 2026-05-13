@@ -53,8 +53,9 @@ export default function KnowledgeBase() {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session?.user) { setAgentError('Not logged in'); setLoading(false); return }
       const { data, error } = await supabase.from('agents').select('*').eq('id', session.user.id).single()
+      console.log('[KnowledgeBase] agent query result:', { data, error, userId: session.user.id })
       if (error || !data) {
-        setAgentError(`No agent profile found for user ${session.user.email}. Run the SQL fix in Supabase.`)
+        setAgentError(`No agent profile found for user ${session.user.email} (id: ${session.user.id}). DB error: ${error?.message ?? 'no row returned'} (code: ${error?.code ?? 'none'})`)
         setLoading(false)
       } else {
         setLocalAgent(data as AgentProfile)
