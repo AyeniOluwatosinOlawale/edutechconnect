@@ -31,25 +31,31 @@ Deno.serve(async (req) => {
     if (!agent) return error('Agent not found', 403)
     if (agent.role !== 'admin') return error('Only admins can invite agents', 403)
 
-    const { email } = await req.json()
-    if (!email?.trim()) return error('email is required')
+    const body = await req.json()
+    const email = body.email?.trim()
+    const inviteRole = body.role === 'admin' ? 'admin' : 'agent'
+    if (!email) return error('email is required')
 
-    // Check if user already exists in this workspace
-    const { data: existing } = await serviceClient
-      .from('agents')
-      .select('id')
-      .eq('workspace_id', agent.workspace_id)
-      .maybeSingle()
-
-    if (existing) return error('An agent with this email already exists in your workspace')
+    // Check if email already in workspace (by email in auth.users joined to agents)
+    const { data: existingList } = await serviceClient.auth.admin.listUsers()
+    const existingUser = existingList?.users.find((u) => u.email === email)
+    if (existingUser) {
+      const { data: existingAgent } = await serviceClient
+        .from('agents')
+        .select('id')
+        .eq('id', existingUser.id)
+        .eq('workspace_id', agent.workspace_id)
+        .maybeSingle()
+      if (existingAgent) return error('This email is already a member of your workspace')
+    }
 
     // Send invite via Supabase Admin API — sets workspace_id + role in user metadata
     const { data, error: inviteErr } = await serviceClient.auth.admin.inviteUserByEmail(
-      email.trim(),
+      email,
       {
         data: {
           workspace_id: agent.workspace_id,
-          role: 'agent',
+          role: inviteRole,
         },
         redirectTo: `${Deno.env.get('DASHBOARD_URL') ?? 'https://edu-dashboard.vercel.app'}/login`,
       },
