@@ -144,7 +144,7 @@ Deno.serve(async (req) => {
     const isBotActive = aiState?.is_bot_active ?? (isNewConversation && aiEnabled)
 
     // Save the incoming visitor message
-    await supabase.from('messages').insert({
+    const { data: visitorMsg } = await supabase.from('messages').insert({
       conversation_id: convId,
       workspace_id: workspaceId,
       sender_type: 'visitor',
@@ -152,7 +152,19 @@ Deno.serve(async (req) => {
       sender_name: visitor.name ?? fromName,
       content_type: 'text',
       content: text,
-    })
+    }).select('id, created_at').single()
+
+    // Broadcast immediately so dashboard sees it without Realtime lag
+    if (visitorMsg) {
+      await broadcastToConversation(convId, {
+        id: visitorMsg.id,
+        conversation_id: convId,
+        sender_type: 'visitor',
+        sender_name: visitor.name ?? fromName,
+        content: text,
+        created_at: visitorMsg.created_at,
+      })
+    }
 
     // ── Handle explicit human request ──
     if (wantsHuman(text)) {
@@ -276,6 +288,22 @@ Deno.serve(async (req) => {
     return json({ ok: false })
   }
 })
+
+async function broadcastToConversation(convId: string, payload: Record<string, unknown>) {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+  await fetch(`${supabaseUrl}/realtime/v1/api/broadcast`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': serviceKey,
+      'Authorization': `Bearer ${serviceKey}`,
+    },
+    body: JSON.stringify({
+      messages: [{ topic: `conversation:${convId}`, event: 'new_message', payload }],
+    }),
+  }).catch(console.error)
+}
 
 async function notifyAgents(
   supabase: ReturnType<typeof createClient>,

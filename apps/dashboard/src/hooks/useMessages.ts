@@ -62,6 +62,15 @@ export function useMessages(conversationId: string | null) {
         setMessages((prev) => [...prev, m])
         if (m.sender_type === 'visitor') playNewMessage()
       })
+      // Broadcast (faster than postgres_changes) — used by widget + telegram-webhook
+      .on('broadcast', { event: 'new_message' }, ({ payload }) => {
+        const m = payload as Message
+        if (!m?.id) return
+        if (seenIds.current.has(m.id)) return
+        seenIds.current.add(m.id)
+        setMessages((prev) => [...prev, m])
+        if (m.sender_type === 'visitor' || m.sender_type === 'bot') playNewMessage()
+      })
       .on('broadcast', { event: 'typing' }, ({ payload }) => {
         if (payload?.sender_type === 'visitor') {
           setIsAgentTyping(payload?.is_typing ?? false)

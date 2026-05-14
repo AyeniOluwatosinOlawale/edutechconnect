@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { Sparkles } from 'lucide-react'
+import { Sparkles, MessageCircle, Globe } from 'lucide-react'
 import { type Conversation } from '../../hooks/useConversations'
 import { Avatar } from '../shared/Avatar'
 import { formatTime } from '../../lib/utils'
@@ -35,6 +35,15 @@ export const ConversationItem = memo(function ConversationItem({ conversation, i
         <div className="flex items-center gap-1.5">
           <span className="font-medium text-slate-800 text-sm truncate">{visitorName}</span>
           <span className="ml-auto flex items-center gap-1 flex-shrink-0">
+            {conversation.source === 'telegram' ? (
+              <span title="Telegram conversation" className="flex items-center gap-0.5 text-[9px] bg-sky-100 text-sky-600 px-1.5 py-0.5 rounded font-medium">
+                <MessageCircle size={8} /> TG
+              </span>
+            ) : (
+              <span title="Widget conversation" className="flex items-center gap-0.5 text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-medium">
+                <Globe size={8} /> Web
+              </span>
+            )}
             {conversation.ai_handled && (
               <span title="AI-handled conversation" className="flex items-center gap-0.5 text-[9px] bg-violet-100 text-violet-600 px-1.5 py-0.5 rounded font-medium">
                 <Sparkles size={8} /> AI

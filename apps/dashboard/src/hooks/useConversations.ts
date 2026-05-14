@@ -11,6 +11,7 @@ export interface Conversation {
   assigned_agent_id: string | null
   ai_handled: boolean
   ai_reply_count: number
+  source: string
   visitors: { name: string | null; email: string | null } | null
   agents: { display_name: string } | null
   last_message?: string
@@ -29,7 +30,7 @@ export function useConversations(status?: string) {
     let query = supabase
       .from('conversations')
       .select(`
-        id, status, started_at, visitor_id, assigned_agent_id, ai_handled, ai_reply_count,
+        id, status, started_at, visitor_id, assigned_agent_id, ai_handled, ai_reply_count, source,
         visitors(name, email),
         agents:assigned_agent_id(display_name)
       `)
