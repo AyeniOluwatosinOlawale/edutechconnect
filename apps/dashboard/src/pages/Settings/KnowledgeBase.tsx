@@ -302,6 +302,20 @@ export default function KnowledgeBase() {
     )
   }
 
+  if (agent && agent.role !== 'super_admin') {
+    return (
+      <div className="max-w-md">
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-8 text-center">
+          <div className="w-12 h-12 bg-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <Sparkles size={22} className="text-amber-500" />
+          </div>
+          <p className="text-sm font-semibold text-amber-800 mb-2">Super Admin Access Required</p>
+          <p className="text-sm text-amber-700">Only the super admin can manage the Knowledge Base and AI settings. Contact your super admin to make changes.</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-3xl space-y-10">
       {/* ── AI Settings ── */}

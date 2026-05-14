@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, KeyboardEvent } from 'react'
-import { Send, CheckCheck, MessageCircle, Sparkles, UserCheck, Tag as TagIcon, X } from 'lucide-react'
+import { Send, CheckCheck, MessageCircle, Sparkles, UserCheck, Tag as TagIcon, X, PhoneIncoming, RotateCcw, Clock } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useMessages } from '../../hooks/useMessages'
 import { useAuthStore } from '../../stores/authStore'
@@ -20,6 +20,7 @@ export function ChatWindow() {
   const [sending, setSending] = useState(false)
   const [isAiActive, setIsAiActive] = useState(false)
   const [convSource, setConvSource] = useState<string | null>(null)
+  const [convStatus, setConvStatus] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   // Persistent broadcast channel — subscribed once per conversation, reused for every send
@@ -96,11 +97,28 @@ export function ChatWindow() {
     }
   }, [selectedConversationId])
 
-  // Fetch conversation source (widget vs telegram)
+  // Fetch conversation source + status
   useEffect(() => {
-    if (!selectedConversationId) { setConvSource(null); return }
-    supabase.from('conversations').select('source').eq('id', selectedConversationId).single()
-      .then(({ data }) => setConvSource(data?.source ?? 'widget'))
+    if (!selectedConversationId) { setConvSource(null); setConvStatus(null); return }
+    supabase.from('conversations').select('source, status').eq('id', selectedConversationId).single()
+      .then(({ data }) => {
+        setConvSource(data?.source ?? 'widget')
+        setConvStatus(data?.status ?? null)
+      })
+
+    // Subscribe to status changes
+    const ch = supabase
+      .channel(`conv-status:${selectedConversationId}`)
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'conversations',
+        filter: `id=eq.${selectedConversationId}`,
+      }, ({ new: row }) => {
+        setConvStatus((row as { status: string }).status)
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
   }, [selectedConversationId])
 
   // Fetch AI state for selected conversation
@@ -246,6 +264,22 @@ export function ChatWindow() {
     setSending(false)
   }
 
+  async function pickUpConversation() {
+    if (!selectedConversationId || !agent) return
+    await supabase.from('conversations')
+      .update({ status: 'active', assigned_agent_id: agent.id })
+      .eq('id', selectedConversationId)
+    setConvStatus('active')
+  }
+
+  async function setConversationWaiting() {
+    if (!selectedConversationId) return
+    await supabase.from('conversations')
+      .update({ status: 'waiting', assigned_agent_id: null })
+      .eq('id', selectedConversationId)
+    setConvStatus('waiting')
+  }
+
   async function handleTakeOver() {
     if (!selectedConversationId) return
     const authHeader = await getAuthHeader()
@@ -265,6 +299,7 @@ export function ChatWindow() {
       headers: { 'Content-Type': 'application/json', Authorization: authHeader },
       body: JSON.stringify({ conversation_id: selectedConversationId }),
     })
+    setConvStatus('resolved')
   }
 
   async function escalateToWhatsApp() {
@@ -343,12 +378,42 @@ export function ChatWindow() {
             <UserCheck size={14} /> Take Over
           </button>
         )}
-        <button
-          onClick={resolveConversation}
-          className="flex items-center gap-1.5 text-xs font-medium text-green-600 hover:bg-green-50 px-3 py-1.5 rounded-lg transition-colors"
-        >
-          <CheckCheck size={14} /> Resolve
-        </button>
+        {/* Pick up — only for waiting conversations */}
+        {convStatus === 'waiting' && (
+          <button
+            onClick={pickUpConversation}
+            className="flex items-center gap-1.5 text-xs font-medium text-brand-600 bg-brand-50 hover:bg-brand-100 px-3 py-1.5 rounded-lg transition-colors"
+          >
+            <PhoneIncoming size={14} /> Pick Up
+          </button>
+        )}
+        {/* Resolve — for active conversations */}
+        {convStatus !== 'resolved' && convStatus !== 'waiting' && (
+          <button
+            onClick={resolveConversation}
+            className="flex items-center gap-1.5 text-xs font-medium text-green-600 hover:bg-green-50 px-3 py-1.5 rounded-lg transition-colors"
+          >
+            <CheckCheck size={14} /> Resolve
+          </button>
+        )}
+        {/* Reopen — for resolved conversations */}
+        {convStatus === 'resolved' && (
+          <button
+            onClick={setConversationWaiting}
+            className="flex items-center gap-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 px-3 py-1.5 rounded-lg transition-colors"
+          >
+            <RotateCcw size={14} /> Reopen
+          </button>
+        )}
+        {/* Set to waiting — for active conversations */}
+        {convStatus === 'active' && (
+          <button
+            onClick={setConversationWaiting}
+            className="flex items-center gap-1.5 text-xs font-medium text-amber-600 hover:bg-amber-50 px-3 py-1.5 rounded-lg transition-colors"
+          >
+            <Clock size={14} /> Set Waiting
+          </button>
+        )}
         <button
           onClick={escalateToWhatsApp}
           className="flex items-center gap-1.5 text-xs font-medium text-brand-600 hover:bg-brand-50 px-3 py-1.5 rounded-lg transition-colors"

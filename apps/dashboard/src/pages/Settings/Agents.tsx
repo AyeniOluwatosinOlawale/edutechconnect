@@ -11,7 +11,7 @@ interface AgentRow {
   id: string
   display_name: string
   avatar_url: string | null
-  role: 'admin' | 'agent'
+  role: 'super_admin' | 'admin' | 'agent'
   status: 'online' | 'busy' | 'offline'
 }
 
@@ -51,7 +51,7 @@ export default function AgentsSettings() {
       })
   }, [me])
 
-  async function changeRole(agentId: string, role: 'admin' | 'agent') {
+  async function changeRole(agentId: string, role: 'admin' | 'agent' | 'super_admin') {
     await supabase.from('agents').update({ role }).eq('id', agentId)
     setAgents((prev) => prev.map((a) => (a.id === agentId ? { ...a, role } : a)))
   }
@@ -104,8 +104,8 @@ export default function AgentsSettings() {
     <div className="max-w-2xl space-y-6">
       <h2 className="text-base font-semibold text-slate-800">Team Members</h2>
 
-      {/* ── Invite form ── */}
-      {me?.role === 'admin' && (
+      {/* ── Invite form — super_admin only ── */}
+      {me?.role === 'super_admin' && (
         <form onSubmit={sendInvites} className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4">
           <div>
             <p className="text-sm font-semibold text-slate-700 mb-1">Invite agents by email</p>
@@ -184,13 +184,17 @@ export default function AgentsSettings() {
                     )}
                   </div>
                   <div className="flex items-center gap-1.5 mt-0.5">
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${a.role === 'admin' ? 'bg-violet-100 text-violet-700' : 'bg-slate-100 text-slate-600'}`}>
-                      {a.role}
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                      a.role === 'super_admin' ? 'bg-brand-100 text-brand-700' :
+                      a.role === 'admin' ? 'bg-violet-100 text-violet-700' :
+                      'bg-slate-100 text-slate-600'
+                    }`}>
+                      {a.role === 'super_admin' ? 'Super Admin' : a.role}
                     </span>
                     <span className="text-xs text-slate-400 capitalize">{a.status}</span>
                   </div>
                 </div>
-                {me?.role === 'admin' && a.id !== me?.id && (
+                {me?.role === 'super_admin' && a.id !== me?.id && a.role !== 'super_admin' && (
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => changeRole(a.id, a.role === 'admin' ? 'agent' : 'admin')}

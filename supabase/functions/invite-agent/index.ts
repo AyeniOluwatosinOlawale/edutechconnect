@@ -29,7 +29,7 @@ Deno.serve(async (req) => {
       .single()
 
     if (!agent) return error('Agent not found', 403)
-    if (agent.role !== 'admin') return error('Only admins can invite agents', 403)
+    if (agent.role !== 'super_admin') return error('Only the super admin can invite agents', 403)
 
     const body = await req.json()
     const email = body.email?.trim()

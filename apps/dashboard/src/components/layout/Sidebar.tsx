@@ -7,13 +7,13 @@ import { Avatar } from '../shared/Avatar'
 import { StatusDot } from '../shared/StatusDot'
 import { useNotifications } from '../../hooks/useNotifications'
 
-const nav = [
-  { to: '/inbox', icon: MessageSquare, label: 'Inbox' },
-  { to: '/visitors', icon: Users, label: 'Visitors' },
-  { to: '/history', icon: History, label: 'History' },
-  { to: '/contacts', icon: BookUser, label: 'Contacts' },
-  { to: '/reports', icon: BarChart3, label: 'Reports' },
-  { to: '/settings', icon: Settings, label: 'Settings' },
+const baseNav = [
+  { to: '/inbox', icon: MessageSquare, label: 'Inbox', roles: null },
+  { to: '/visitors', icon: Users, label: 'Visitors', roles: null },
+  { to: '/history', icon: History, label: 'History', roles: null },
+  { to: '/contacts', icon: BookUser, label: 'Contacts', roles: null },
+  { to: '/reports', icon: BarChart3, label: 'Reports', roles: ['super_admin', 'admin'] },
+  { to: '/settings', icon: Settings, label: 'Settings', roles: null },
 ]
 
 const STATUS_OPTIONS = [
@@ -27,6 +27,10 @@ export function Sidebar() {
   const { unreadCount } = useNotifications()
   const [showStatusMenu, setShowStatusMenu] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+
+  const nav = baseNav.filter((item) =>
+    item.roles === null || (agent?.role && item.roles.includes(agent.role))
+  )
 
   useEffect(() => {
     function onClick(e: MouseEvent) {
