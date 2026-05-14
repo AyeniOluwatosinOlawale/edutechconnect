@@ -20,6 +20,12 @@ export function useMessages(conversationId: string | null) {
   const [isAgentTyping, setIsAgentTyping] = useState(false)
   const seenIds = useRef(new Set<string>())
 
+  function addOptimistic(msg: Message) {
+    if (seenIds.current.has(msg.id)) return
+    seenIds.current.add(msg.id)
+    setMessages((prev) => [...prev, msg])
+  }
+
   useEffect(() => {
     if (!conversationId) {
       setMessages([])
@@ -69,5 +75,5 @@ export function useMessages(conversationId: string | null) {
     }
   }, [conversationId])
 
-  return { messages, loading, isAgentTyping }
+  return { messages, loading, isAgentTyping, addOptimistic }
 }

@@ -15,7 +15,7 @@ interface ConvTag { id: string; name: string; color: string }
 export function ChatWindow() {
   const { selectedConversationId } = useChatStore()
   const { agent } = useAuthStore()
-  const { messages, loading, isAgentTyping } = useMessages(selectedConversationId)
+  const { messages, loading, isAgentTyping, addOptimistic } = useMessages(selectedConversationId)
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [isAiActive, setIsAiActive] = useState(false)
@@ -175,7 +175,16 @@ export function ChatWindow() {
       sender_name: agent.display_name,
       content_type: 'text',
       content,
-    }).select('id, created_at').single()
+    }).select('id, created_at, conversation_id, sender_id, sender_name, content_type, deleted_at').single()
+
+    // Show message instantly — don't wait for Realtime echo
+    if (inserted) {
+      addOptimistic({
+        ...inserted,
+        sender_type: 'agent',
+        content,
+      })
+    }
 
     await supabase
       .from('conversations')
@@ -204,13 +213,14 @@ export function ChatWindow() {
       })
     }
 
-    // Forward to Telegram if this is a Telegram conversation (read source fresh to avoid stale state)
-    const { data: convData } = await supabase.from('conversations').select('source').eq('id', selectedConversationId).single()
-    if (convData?.source === 'telegram') {
-      const authHeader = await getAuthHeader()
+    // Forward to Telegram if this is a Telegram conversation
+    if (inserted && convSource === 'telegram') {
       fetch(`${FUNCTIONS_URL}/telegram-forward`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
         body: JSON.stringify({ conversation_id: selectedConversationId, content, agent_name: agent.display_name }),
       }).catch(console.error)
     }
