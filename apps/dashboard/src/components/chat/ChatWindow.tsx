@@ -19,6 +19,7 @@ export function ChatWindow() {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [isAiActive, setIsAiActive] = useState(false)
+  const [convSource, setConvSource] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -76,6 +77,13 @@ export function ChatWindow() {
     document.addEventListener('mousedown', onClick)
     return () => document.removeEventListener('mousedown', onClick)
   }, [])
+
+  // Fetch conversation source (widget vs telegram)
+  useEffect(() => {
+    if (!selectedConversationId) { setConvSource(null); return }
+    supabase.from('conversations').select('source').eq('id', selectedConversationId).single()
+      .then(({ data }) => setConvSource(data?.source ?? 'widget'))
+  }, [selectedConversationId])
 
   // Fetch AI state for selected conversation
   useEffect(() => {
@@ -196,6 +204,16 @@ export function ChatWindow() {
       })
     }
 
+    // Forward to Telegram if this is a Telegram conversation
+    if (convSource === 'telegram') {
+      const authHeader = await getAuthHeader()
+      fetch(`${FUNCTIONS_URL}/telegram-forward`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+        body: JSON.stringify({ conversation_id: selectedConversationId, content, agent_name: agent.display_name }),
+      }).catch(console.error)
+    }
+
     setSending(false)
   }
 
@@ -241,6 +259,11 @@ export function ChatWindow() {
     <div className="flex-1 flex flex-col min-w-0 bg-white">
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-100 bg-white flex-wrap">
+        {convSource === 'telegram' && (
+          <span className="flex items-center gap-1.5 text-xs font-medium bg-sky-100 text-sky-700 px-2.5 py-1 rounded-lg flex-shrink-0">
+            <MessageCircle size={11} /> Telegram
+          </span>
+        )}
         {isAiActive && (
           <span className="flex items-center gap-1.5 text-xs font-medium bg-violet-100 text-violet-700 px-2.5 py-1 rounded-lg">
             <Sparkles size={11} /> AI Active
