@@ -49,11 +49,17 @@ Deno.serve(async (req) => {
 
     const visitor = (conv as { visitors: { name: string | null; email: string | null; phone: string | null } }).visitors
 
-    // Mark conversation escalated
-    await supabase
+    // Atomic status change — skip if already escalated so double-clicks don't double-notify
+    const { data: updated } = await supabase
       .from('conversations')
       .update({ status: 'escalated' })
       .eq('id', conversation_id)
+      .neq('status', 'escalated')
+      .select('id')
+
+    if (!updated || updated.length === 0) {
+      return json({ success: true, skipped: true })
+    }
 
     // Insert system message visible in chat
     await supabase.from('messages').insert({

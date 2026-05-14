@@ -168,23 +168,27 @@ Deno.serve(async (req) => {
 
     // ── Handle explicit human request ──
     if (wantsHuman(text)) {
-      if (isBotActive) {
-        await Promise.all([
-          supabase.from('conversation_ai_state').update({
-            is_bot_active: false,
-            handoff_reason: 'user_request',
-            handed_off_at: new Date().toISOString(),
-          }).eq('conversation_id', convId),
-          supabase.from('conversations').update({ status: 'waiting', ai_handled: false }).eq('id', convId),
-        ])
+      // Atomic — only notify once even if user sends "human" multiple times
+      const { data: escalated } = await supabase
+        .from('conversation_ai_state')
+        .update({
+          is_bot_active: false,
+          handoff_reason: 'user_request',
+          handed_off_at: new Date().toISOString(),
+        })
+        .eq('conversation_id', convId)
+        .eq('is_bot_active', true)
+        .select('id')
 
+      await supabase.from('conversations').update({ status: 'waiting', ai_handled: false }).eq('id', convId)
+
+      if (escalated && escalated.length > 0) {
         await supabase.from('messages').insert({
           conversation_id: convId,
           workspace_id: workspaceId,
           sender_type: 'system',
           content: "I'll connect you with a human agent who can help further.",
         })
-
         await notifyAgents(supabase, workspaceId, convId, visitor.name ?? fromName)
       }
 
@@ -246,28 +250,38 @@ Deno.serve(async (req) => {
     }
 
     if (shouldEscalate || !botReply) {
-      // Escalate to human agent
-      await Promise.all([
-        supabase.from('conversation_ai_state').update({
+      // Atomic escalation — add .eq('is_bot_active', true) so only ONE concurrent
+      // request wins. If two messages race and both reach this point, only the first
+      // UPDATE that finds is_bot_active = true will return a row; the second returns
+      // 0 rows and skips notification (prevents duplicate alerts).
+      const { data: escalated } = await supabase
+        .from('conversation_ai_state')
+        .update({
           is_bot_active: false,
           handoff_reason: 'low_confidence',
           handed_off_at: new Date().toISOString(),
-        }).eq('conversation_id', convId),
-        supabase.from('conversations').update({ status: 'waiting', ai_handled: false }).eq('id', convId),
-      ])
+        })
+        .eq('conversation_id', convId)
+        .eq('is_bot_active', true)   // only update if still active
+        .select('id')
 
-      await supabase.from('messages').insert({
-        conversation_id: convId,
-        workspace_id: workspaceId,
-        sender_type: 'system',
-        content: "I'll connect you with a human agent who can help further.",
-      })
+      await supabase.from('conversations').update({ status: 'waiting', ai_handled: false }).eq('id', convId)
 
-      await notifyAgents(supabase, workspaceId, convId, visitor.name ?? fromName)
+      // Only fire notification + visitor message on the FIRST escalation
+      if (escalated && escalated.length > 0) {
+        await supabase.from('messages').insert({
+          conversation_id: convId,
+          workspace_id: workspaceId,
+          sender_type: 'system',
+          content: "I'll connect you with a human agent who can help further.",
+        })
 
-      await sendMessage(chatId,
-        `I'm not sure about that one. Let me connect you with a human agent who can help. 🙋\n\nAn agent will reply here shortly.`
-      )
+        await notifyAgents(supabase, workspaceId, convId, visitor.name ?? fromName)
+
+        await sendMessage(chatId,
+          `I'm not sure about that one. Let me connect you with a human agent who can help. 🙋\n\nAn agent will reply here shortly.`
+        )
+      }
     } else {
       // Save and send bot reply
       await supabase.from('messages').insert({

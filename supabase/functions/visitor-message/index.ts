@@ -285,39 +285,47 @@ The visitor sent a casual message. Respond warmly in 1-2 sentences. Be welcoming
         }
 
         if (shouldEscalate || !ragReply) {
-          // Escalate to human
-          await Promise.all([
-            supabase.from('conversation_ai_state').update({
+          // Atomic escalation — only the first concurrent request wins.
+          // Extra .eq('is_bot_active', true) ensures only one escalation fires
+          // even if the visitor sends multiple messages before the DB update lands.
+          const { data: escalated } = await supabase
+            .from('conversation_ai_state')
+            .update({
               is_bot_active: false,
               handoff_reason: 'low_confidence',
               handed_off_at: new Date().toISOString(),
               last_top_score: topScore,
-            }).eq('conversation_id', convId),
-            supabase.from('conversations').update({ status: 'waiting', ai_handled: false }).eq('id', convId),
-          ])
+            })
+            .eq('conversation_id', convId)
+            .eq('is_bot_active', true)
+            .select('id')
 
-          const sysMsgContent = "I'll connect you with a human agent who can help further."
-          const { data: sysMsg } = await supabase.from('messages').insert({
-            conversation_id: convId,
-            workspace_id,
-            sender_type: 'system',
-            content: sysMsgContent,
-          }).select('id, created_at').single()
+          await supabase.from('conversations').update({ status: 'waiting', ai_handled: false }).eq('id', convId)
 
-          const sysMsgId = sysMsg?.id ?? crypto.randomUUID()
-          const sysMsgAt = sysMsg?.created_at ?? new Date().toISOString()
-          systemMessage = { id: sysMsgId, content: sysMsgContent, created_at: sysMsgAt }
+          if (escalated && escalated.length > 0) {
+            const sysMsgContent = "I'll connect you with a human agent who can help further."
+            const { data: sysMsg } = await supabase.from('messages').insert({
+              conversation_id: convId,
+              workspace_id,
+              sender_type: 'system',
+              content: sysMsgContent,
+            }).select('id, created_at').single()
 
-          await broadcastToConversation(convId, {
-            id: sysMsgId,
-            conversation_id: convId,
-            sender_type: 'system',
-            sender_name: null,
-            content: sysMsgContent,
-            created_at: sysMsgAt,
-          })
+            const sysMsgId = sysMsg?.id ?? crypto.randomUUID()
+            const sysMsgAt = sysMsg?.created_at ?? new Date().toISOString()
+            systemMessage = { id: sysMsgId, content: sysMsgContent, created_at: sysMsgAt }
 
-          await notifyAgents(supabase, workspace_id, convId, visitor.name)
+            await broadcastToConversation(convId, {
+              id: sysMsgId,
+              conversation_id: convId,
+              sender_type: 'system',
+              sender_name: null,
+              content: sysMsgContent,
+              created_at: sysMsgAt,
+            })
+
+            await notifyAgents(supabase, workspace_id, convId, visitor.name)
+          }
         } else {
           // Save and broadcast bot reply
           const { data: botMsg } = await supabase.from('messages').insert({
