@@ -213,16 +213,21 @@ export function ChatWindow() {
       })
     }
 
-    // Forward to Telegram if this is a Telegram conversation
-    if (inserted && convSource === 'telegram') {
-      fetch(`${FUNCTIONS_URL}/telegram-forward`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-        },
-        body: JSON.stringify({ conversation_id: selectedConversationId, content, agent_name: agent.display_name }),
-      }).catch(console.error)
+    // Forward to Telegram — always check fresh from DB to avoid state race
+    if (inserted) {
+      supabase.from('conversations').select('source').eq('id', selectedConversationId).single()
+        .then(({ data }) => {
+          if (data?.source === 'telegram') {
+            fetch(`${FUNCTIONS_URL}/telegram-forward`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+              },
+              body: JSON.stringify({ conversation_id: selectedConversationId, content, agent_name: agent.display_name }),
+            }).catch(console.error)
+          }
+        })
     }
 
     setSending(false)
