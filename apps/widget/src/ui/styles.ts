@@ -257,43 +257,30 @@ export function buildStyles(brandColor: string): string {
     .edu-send:not(:disabled):hover { transform: scale(1.08); }
     .edu-send svg { width: 16px; height: 16px; fill: #fff; }
 
-    .edu-ai-indicator {
+    .edu-suggestions {
       display: flex;
-      align-items: center;
+      flex-wrap: wrap;
       gap: 6px;
-      padding: 6px 14px;
-      background: #f5f3ff;
-      border-bottom: 1px solid #ede9fe;
-      font-size: 11px;
-      color: #7c3aed;
-      font-weight: 600;
-      flex-shrink: 0;
+      padding: 6px 0 2px;
     }
-    .edu-ai-dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: #7c3aed;
-      animation: pulse 1.5s infinite;
-    }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.35; }
-    }
-    .edu-human-btn {
-      margin-left: auto;
-      background: none;
-      border: 1.5px solid #7c3aed;
-      color: #7c3aed;
-      border-radius: 6px;
-      padding: 3px 10px;
-      font-size: 10px;
-      font-weight: 600;
+    .edu-suggestion-chip {
+      background: #fff;
+      border: 1.5px solid ${brandColor};
+      color: ${brandColor};
+      border-radius: 20px;
+      padding: 5px 12px;
+      font-size: 12px;
+      font-weight: 500;
       cursor: pointer;
       font-family: inherit;
-      transition: background 0.15s;
+      line-height: 1.3;
+      transition: background 0.15s, color 0.15s;
+      text-align: left;
     }
-    .edu-human-btn:hover { background: #ede9fe; }
+    .edu-suggestion-chip:hover {
+      background: ${brandColor};
+      color: #fff;
+    }
 
     /* Pre-chat form */
     .edu-prechat {

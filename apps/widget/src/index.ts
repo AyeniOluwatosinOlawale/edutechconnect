@@ -103,6 +103,9 @@ import type { ChatMessage, PreChatData } from './types'
                 content: res.bot_reply.content,
                 created_at: res.bot_reply.created_at,
               })
+              if (res.suggested_questions?.length) {
+                panel?.showSuggestions(res.suggested_questions)
+              }
             }
             if (res.system_message) {
               panel?.appendMessage({
@@ -112,10 +115,6 @@ import type { ChatMessage, PreChatData } from './types'
                 content: res.system_message.content,
                 created_at: res.system_message.created_at,
               })
-              if (state?.isAiActive) {
-                state.isAiActive = false
-                panel?.setAiMode(false)
-              }
             }
           } catch (e) {
             console.error('[EduChat] Failed to send message', e)
@@ -136,8 +135,6 @@ import type { ChatMessage, PreChatData } from './types'
               visitor_token: state.visitorToken,
               conversation_id: state.conversationId,
             })
-            state.isAiActive = false
-            panel?.setAiMode(false)
           } catch (e) {
             console.error('[EduChat] Failed to request human', e)
           }
@@ -163,18 +160,23 @@ import type { ChatMessage, PreChatData } from './types'
       !!initData.conversation_id, // existingConversation
     )
 
-    // AI mode
-    if (state.isAiActive) {
-      panel.setAiMode(true)
-      if (!state.conversationId && initData.workspace_settings.ai_greeting_message) {
-        panel.appendMessage({
-          id: `greeting-${Date.now()}`,
-          sender_type: 'bot',
-          sender_name: null,
-          content: initData.workspace_settings.ai_greeting_message,
-          created_at: new Date().toISOString(),
-        })
-      }
+    // Show AI greeting + suggestion chips for new visitors
+    if (!state.conversationId) {
+      const greeting = initData.workspace_settings.ai_greeting_message
+        ?? 'Hi there! I am your AI assistant. Ask me about our programs, courses, fees, or enrollment process.'
+      panel.appendMessage({
+        id: `greeting-${Date.now()}`,
+        sender_type: 'bot',
+        sender_name: null,
+        content: greeting,
+        created_at: new Date().toISOString(),
+      })
+      panel.showSuggestions([
+        'What programs do you offer?',
+        'How much are the course fees?',
+        'How do I enroll?',
+        'What are the entry requirements?',
+      ])
     }
 
     if (state.conversationId) {
@@ -187,9 +189,7 @@ import type { ChatMessage, PreChatData } from './types'
       open: () => panel?.open(),
       close: () => panel?.close(),
       requestHuman: () => panel && state?.conversationId
-        ? requestHuman({ visitor_token: state.visitorToken, conversation_id: state.conversationId })
-            .then(() => { if (state) { state.isAiActive = false; panel?.setAiMode(false) } })
-            .catch(() => {})
+        ? requestHuman({ visitor_token: state.visitorToken, conversation_id: state.conversationId }).catch(() => {})
         : Promise.resolve(),
     }
   } catch (e) {
@@ -212,10 +212,7 @@ import type { ChatMessage, PreChatData } from './types'
         if (msg.sender_type === 'agent' || msg.sender_type === 'bot' || msg.sender_type === 'system') {
           p.appendMessage(msg)
         }
-        if (msg.sender_type === 'system' && state?.isAiActive) {
-          state.isAiActive = false
-          p.setAiMode(false)
-        }
+        // no-op: AI mode indicator removed
       }
     })
   }

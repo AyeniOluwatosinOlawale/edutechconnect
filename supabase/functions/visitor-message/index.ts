@@ -8,6 +8,19 @@ Answer the visitor's question using ONLY the context provided.
 If the answer is not in the context, say you are not sure and invite them to ask about programs, courses, fees, or enrollment.
 Keep answers concise (under 150 words). Be friendly and professional.`
 
+const DEFAULT_SUGGESTIONS = [
+  'What programs do you offer?',
+  'How much are the course fees?',
+  'How do I enroll?',
+  'What are the entry requirements?',
+]
+
+const CASUAL_RE = /^(hi+|hello+|hey+|hola|howdy|yo|sup|good\s+(morning|afternoon|evening|day)|ok(ay)?|k|sure|alright|got\s+it|noted|understood|thanks?(\s+you(\s+so\s+much)?)?|thx|cheers|great|cool|nice|awesome|perfect|wonderful|wow|really\??|ye+s|no+|yep|nope|yeah|bye+|goodbye|see\s+ya?|later|cya)[\.\!\?]?$/i
+
+function isCasualMessage(text: string): boolean {
+  return CASUAL_RE.test(text.trim()) || text.trim().length <= 3
+}
+
 // Mirror the same strict human-request detection as telegram-webhook
 function wantsHuman(text: string): boolean {
   const t = text.toLowerCase().trim()
@@ -147,6 +160,42 @@ Deno.serve(async (req) => {
       const isBotActive = aiState?.is_bot_active ?? (isNewConversation && aiEnabled)
 
       if (isBotActive) {
+        // ── Casual greeting / acknowledgment — friendly reply, no RAG ──
+        if (isCasualMessage(content.trim())) {
+          const casualPrompt = `You are a friendly AI assistant for an education platform called EduTechConnect.
+The visitor sent a casual message. Respond warmly in 1-2 sentences. Be welcoming and let them know you can help with programs, courses, fees, or enrollment.`
+          let casualReply = 'Hello! Great to hear from you. Feel free to ask me anything about our programs, courses, fees, or how to enroll!'
+          try {
+            const completion = await chatCompletion({ systemPrompt: casualPrompt, userMessage: content.trim(), context: '', history: [] })
+            casualReply = completion.content ?? casualReply
+          } catch { /* use default */ }
+
+          const { data: botMsg } = await supabase.from('messages').insert({
+            conversation_id: convId,
+            workspace_id,
+            sender_type: 'bot',
+            sender_name: 'AI Assistant',
+            content_type: 'text',
+            content: casualReply,
+          }).select('id, created_at').single()
+
+          const botMsgId = botMsg?.id ?? crypto.randomUUID()
+          const botMsgAt = botMsg?.created_at ?? new Date().toISOString()
+          botReply = { id: botMsgId, content: casualReply, created_at: botMsgAt }
+
+          await broadcastToConversation(convId, {
+            id: botMsgId, conversation_id: convId, sender_type: 'bot',
+            sender_name: 'AI Assistant', content: casualReply, created_at: botMsgAt,
+          })
+
+          return json({
+            message_id: message!.id,
+            conversation_id: convId,
+            bot_reply: botReply,
+            suggested_questions: DEFAULT_SUGGESTIONS,
+          })
+        }
+
         // ── Explicit human request — skip RAG, hand off immediately ──
         if (wantsHuman(content.trim())) {
           await Promise.all([
@@ -305,7 +354,7 @@ Deno.serve(async (req) => {
     return json({
       message_id: message!.id,
       conversation_id: convId,
-      ...(botReply ? { bot_reply: botReply } : {}),
+      ...(botReply ? { bot_reply: botReply, suggested_questions: DEFAULT_SUGGESTIONS } : {}),
       ...(systemMessage ? { system_message: systemMessage } : {}),
     })
   } catch (e) {

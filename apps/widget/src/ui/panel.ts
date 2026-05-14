@@ -38,9 +38,8 @@ export class ChatPanel {
   private typingEl!: HTMLDivElement
   private typingLabel!: HTMLSpanElement
   private badge!: HTMLDivElement
-  private aiIndicatorEl!: HTMLDivElement
-  private humanBtn!: HTMLButtonElement
   private csatEl!: HTMLDivElement
+  private suggestionsEl!: HTMLDivElement
   private isOpen = false
   private unreadCount = 0
   private typingTimeout: ReturnType<typeof setTimeout> | null = null
@@ -156,17 +155,6 @@ export class ChatPanel {
     this.chatView = document.createElement('div')
     this.chatView.style.cssText = 'display:flex;flex-direction:column;flex:1;min-height:0;'
 
-    // AI indicator bar
-    this.aiIndicatorEl = document.createElement('div')
-    this.aiIndicatorEl.className = 'edu-ai-indicator'
-    this.aiIndicatorEl.style.display = 'none'
-    this.aiIndicatorEl.innerHTML = '<span class="edu-ai-dot"></span><span>AI Assistant</span>'
-    this.humanBtn = document.createElement('button')
-    this.humanBtn.className = 'edu-human-btn'
-    this.humanBtn.textContent = 'Talk to human'
-    this.humanBtn.onclick = () => this.callbacks.onHumanRequest()
-    this.aiIndicatorEl.appendChild(this.humanBtn)
-
     // Messages
     this.messagesEl = document.createElement('div')
     this.messagesEl.className = 'edu-messages'
@@ -256,8 +244,13 @@ export class ChatPanel {
     inputRow.appendChild(this.input)
     inputRow.appendChild(this.sendBtn)
 
-    this.chatView.appendChild(this.aiIndicatorEl)
+    // Suggestion chips container (sits between messages and input)
+    this.suggestionsEl = document.createElement('div')
+    this.suggestionsEl.className = 'edu-suggestions'
+    this.suggestionsEl.style.cssText = 'padding: 0 12px 8px; display: none;'
+
     this.chatView.appendChild(this.messagesEl)
+    this.chatView.appendChild(this.suggestionsEl)
     this.chatView.appendChild(this.csatEl)
     this.chatView.appendChild(inputRow)
 
@@ -344,6 +337,12 @@ export class ChatPanel {
     const empty = this.messagesEl.querySelector('.edu-empty')
     if (empty) empty.remove()
 
+    // Hide chips when a new message arrives
+    if (msg.sender_type === 'visitor') {
+      this.suggestionsEl.style.display = 'none'
+      this.suggestionsEl.innerHTML = ''
+    }
+
     const typingWrap = (this as unknown as Record<string, unknown>)._typingWrap as HTMLElement
 
     // Check if conversation was resolved (system message)
@@ -410,9 +409,24 @@ export class ChatPanel {
     this.sendBtn.disabled = true
   }
 
-  setAiMode(active: boolean) {
-    this.aiIndicatorEl.style.display = active ? 'flex' : 'none'
-    this.input.placeholder = 'Type a message…'
+  showSuggestions(questions: string[]) {
+    this.suggestionsEl.innerHTML = ''
+    if (!questions.length) { this.suggestionsEl.style.display = 'none'; return }
+    questions.forEach((q) => {
+      const chip = document.createElement('button')
+      chip.className = 'edu-suggestion-chip'
+      chip.textContent = q
+      chip.onclick = () => {
+        this.suggestionsEl.style.display = 'none'
+        this.suggestionsEl.innerHTML = ''
+        this.input.value = q
+        this.input.dispatchEvent(new Event('input'))
+        this.input.focus()
+        this.submit()
+      }
+      this.suggestionsEl.appendChild(chip)
+    })
+    this.suggestionsEl.style.display = 'flex'
   }
 
   setAgentTyping(isTyping: boolean, agentName?: string) {

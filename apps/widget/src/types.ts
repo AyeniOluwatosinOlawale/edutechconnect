@@ -34,6 +34,7 @@ export interface SendMessageResponse {
   conversation_id: string
   bot_reply?: { id: string; content: string; created_at: string }
   system_message?: { id: string; content: string; created_at: string }
+  suggested_questions?: string[]
 }
 
 export interface ChatMessage {
