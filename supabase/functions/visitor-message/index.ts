@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders, handleOptions, json, error } from '../_shared/cors.ts'
+import { handleOptions, json, error } from '../_shared/cors.ts'
 import { createLead, searchLeads } from '../_shared/zoho.ts'
 import { createEmbedding, chatCompletion } from '../_shared/openai.ts'
 
@@ -7,6 +7,17 @@ const DEFAULT_SYSTEM_PROMPT = `You are a helpful support assistant for an educat
 Answer the visitor's question using ONLY the context provided.
 If the answer is not in the context, say you are not sure and invite them to ask about programs, courses, fees, or enrollment.
 Keep answers concise (under 150 words). Be friendly and professional.`
+
+// Mirror the same strict human-request detection as telegram-webhook
+function wantsHuman(text: string): boolean {
+  const t = text.toLowerCase().trim()
+  return (
+    t === 'human' ||
+    t === 'agent' ||
+    /^(i want|i need|can i (speak|talk|chat)|connect me|transfer me).*(human|agent|person|someone|staff)/i.test(t) ||
+    /^(speak|talk|chat) (to|with) (a |an |)(human|agent|person|real person|live agent)/i.test(t)
+  )
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handleOptions()
@@ -41,12 +52,11 @@ Deno.serve(async (req) => {
       if (visitor_email) updates.email = visitor_email
       if (visitor_phone) updates.phone = visitor_phone
       await supabase.from('visitors').update(updates).eq('id', visitor.id)
-      // Merge into local visitor object so Zoho lead uses the new details
       if (visitor_name) visitor.name = visitor_name
       if (visitor_email) visitor.email = visitor_email
     }
 
-    // Fetch workspace settings to check AI config
+    // Fetch workspace settings
     const { data: workspace } = await supabase
       .from('workspaces')
       .select('settings')
@@ -54,7 +64,11 @@ Deno.serve(async (req) => {
       .single()
 
     const settings = (workspace?.settings ?? {}) as Record<string, unknown>
-    const aiEnabled = settings.ai_enabled === true
+    // Default AI to ON (same as telegram-webhook) — explicit false to disable
+    const aiEnabled = settings.ai_enabled !== false
+    const confidenceThreshold = (settings.ai_confidence_threshold as number) ?? 0.30
+    const maxChunks = (settings.ai_max_context_chunks as number) ?? 4
+    const systemPrompt = (settings.ai_system_prompt as string) ?? DEFAULT_SYSTEM_PROMPT
 
     let convId = conversation_id
     let isNewConversation = false
@@ -70,6 +84,7 @@ Deno.serve(async (req) => {
           workspace_id,
           visitor_id: visitor.id,
           status: 'waiting',
+          source: 'widget',
           ai_handled: aiEnabled,
         })
         .select('id')
@@ -77,7 +92,6 @@ Deno.serve(async (req) => {
 
       convId = newConv!.id
 
-      // Create AI state row for new conversation
       if (aiEnabled) {
         await supabase.from('conversation_ai_state').insert({
           conversation_id: convId,
@@ -86,16 +100,12 @@ Deno.serve(async (req) => {
         })
       }
 
-      // Non-blocking: Zoho lead + agent notifications (only for non-AI conversations,
-      // or conversations where AI is disabled)
+      // Background: Zoho lead
+      handleZohoLead(visitor, convId).catch(console.error)
+
+      // Notify agents only for non-AI conversations
       if (!aiEnabled) {
-        Promise.allSettled([
-          handleZohoLead(visitor, convId),
-          notifyAgents(supabase, workspace_id, convId, visitor.name),
-        ]).catch(console.error)
-      } else {
-        // Still create Zoho lead in background for AI conversations
-        handleZohoLead(visitor, convId).catch(console.error)
+        notifyAgents(supabase, workspace_id, convId, visitor.name).catch(console.error)
       }
     }
 
@@ -111,12 +121,23 @@ Deno.serve(async (req) => {
         content_type: 'text',
         content: content.trim(),
       })
-      .select('id')
+      .select('id, created_at')
       .single()
 
-    // ── RAG AUTO-REPLY ──────────────────────────────────────────────────────
+    // Broadcast visitor message immediately so dashboard sees it without Realtime lag
+    if (message) {
+      await broadcastToConversation(convId, {
+        id: message.id,
+        conversation_id: convId,
+        sender_type: 'visitor',
+        sender_name: visitor.name ?? 'Visitor',
+        content: content.trim(),
+        created_at: message.created_at,
+      })
+    }
+
+    // ── AI PIPELINE ─────────────────────────────────────────────────────────
     if (aiEnabled) {
-      // Check if bot is still active for this conversation
       const { data: aiState } = await supabase
         .from('conversation_ai_state')
         .select('is_bot_active')
@@ -126,34 +147,72 @@ Deno.serve(async (req) => {
       const isBotActive = aiState?.is_bot_active ?? (isNewConversation && aiEnabled)
 
       if (isBotActive) {
-        // Fetch recent conversation history for context window
-        const { data: recentMessages } = await supabase
-          .from('messages')
-          .select('sender_type, content')
-          .eq('conversation_id', convId)
-          .is('deleted_at', null)
-          .order('created_at', { ascending: false })
-          .limit(12)
+        // ── Explicit human request — skip RAG, hand off immediately ──
+        if (wantsHuman(content.trim())) {
+          await Promise.all([
+            supabase.from('conversation_ai_state').update({
+              is_bot_active: false,
+              handoff_reason: 'user_request',
+              handed_off_at: new Date().toISOString(),
+            }).eq('conversation_id', convId),
+            supabase.from('conversations').update({ status: 'waiting', ai_handled: false }).eq('id', convId),
+          ])
 
-        const history = (recentMessages ?? [])
-          .reverse()
-          .filter((m) => m.content && m.sender_type !== 'system')
-          .map((m) => ({
-            role: (m.sender_type === 'visitor' ? 'user' : 'assistant') as 'user' | 'assistant',
-            content: m.content,
-          }))
+          const sysMsgContent = "I'll connect you with a human agent right away."
+          const { data: sysMsg } = await supabase.from('messages').insert({
+            conversation_id: convId,
+            workspace_id,
+            sender_type: 'system',
+            content: sysMsgContent,
+          }).select('id, created_at').single()
 
-        // ── Inline RAG pipeline ──────────────────────────────────────────────
-        const confidenceThreshold = (settings.ai_confidence_threshold as number) ?? 0.75
-        const maxChunks = (settings.ai_max_context_chunks as number) ?? 4
-        const systemPrompt = (settings.ai_system_prompt as string) ?? DEFAULT_SYSTEM_PROMPT
+          const sysMsgId = sysMsg?.id ?? crypto.randomUUID()
+          const sysMsgAt = sysMsg?.created_at ?? new Date().toISOString()
+          systemMessage = { id: sysMsgId, content: sysMsgContent, created_at: sysMsgAt }
 
-        let rag: { reply: string | null; should_escalate: boolean; top_score: number; chunk_ids_used: string[] } | null = null
+          await broadcastToConversation(convId, {
+            id: sysMsgId,
+            conversation_id: convId,
+            sender_type: 'system',
+            sender_name: null,
+            content: sysMsgContent,
+            created_at: sysMsgAt,
+          })
+
+          await notifyAgents(supabase, workspace_id, convId, visitor.name)
+
+          return json({
+            message_id: message!.id,
+            conversation_id: convId,
+            system_message: systemMessage,
+          })
+        }
+
+        // ── RAG pipeline ──
+        let shouldEscalate = false
+        let ragReply: string | null = null
+        let topScore = 0
+        let chunkIds: string[] = []
+
         try {
-          // Step 1: embed visitor query
+          const { data: recentMessages } = await supabase
+            .from('messages')
+            .select('sender_type, content')
+            .eq('conversation_id', convId)
+            .is('deleted_at', null)
+            .order('created_at', { ascending: false })
+            .limit(10)
+
+          const history = (recentMessages ?? [])
+            .reverse()
+            .filter((m) => m.content && m.sender_type !== 'system')
+            .map((m) => ({
+              role: (m.sender_type === 'visitor' ? 'user' : 'assistant') as 'user' | 'assistant',
+              content: m.content,
+            }))
+
           const queryEmbedding = await createEmbedding(content.trim())
 
-          // Step 2: vector similarity search
           const { data: chunks, error: matchErr } = await supabase.rpc('match_chunks', {
             query_embedding: queryEmbedding,
             p_workspace_id: workspace_id,
@@ -161,40 +220,31 @@ Deno.serve(async (req) => {
             match_count: maxChunks,
           })
 
-          const topScore = chunks?.[0]?.similarity ?? 0
-          const chunkIds = (chunks ?? []).map((c: { id: string }) => c.id)
+          topScore = chunks?.[0]?.similarity ?? 0
+          chunkIds = (chunks ?? []).map((c: { id: string }) => c.id)
 
           if (matchErr || !chunks || chunks.length === 0 || topScore < confidenceThreshold) {
-            // No KB match → escalate to human agent
-            rag = { reply: null, should_escalate: true, top_score: topScore, chunk_ids_used: chunkIds }
+            shouldEscalate = true
           } else {
-            // Step 3: GPT-4o completion — always use the reply, never auto-escalate
             const context = (chunks as Array<{ content: string }>).map((c) => c.content).join('\n---\n')
             const completion = await chatCompletion({ systemPrompt, userMessage: content.trim(), context, history })
-            rag = {
-              reply: completion.content,
-              should_escalate: false,
-              top_score: topScore,
-              chunk_ids_used: chunkIds,
-            }
+            ragReply = completion.content
           }
         } catch (ragErr) {
-          console.error('[visitor-message] RAG pipeline error:', ragErr)
-          rag = null
+          console.error('[visitor-message] RAG error:', ragErr)
+          shouldEscalate = true
         }
 
-        if (!rag || rag.should_escalate || !rag.reply) {
-          // Escalate to human — update AI state, conversation status, notify agents
+        if (shouldEscalate || !ragReply) {
+          // Escalate to human
           await Promise.all([
             supabase.from('conversation_ai_state').update({
-              is_bot_active:  false,
+              is_bot_active: false,
               handoff_reason: 'low_confidence',
-              handed_off_at:  new Date().toISOString(),
-              last_top_score: rag?.top_score ?? 0,
+              handed_off_at: new Date().toISOString(),
+              last_top_score: topScore,
             }).eq('conversation_id', convId),
-            // Mark conversation as waiting so it appears in the agent inbox
-            supabase.from('conversations').update({ status: 'waiting', ai_handled: false })
-              .eq('id', convId),
+            supabase.from('conversations').update({ status: 'waiting', ai_handled: false }).eq('id', convId),
           ])
 
           const sysMsgContent = "I'll connect you with a human agent who can help further."
@@ -209,8 +259,7 @@ Deno.serve(async (req) => {
           const sysMsgAt = sysMsg?.created_at ?? new Date().toISOString()
           systemMessage = { id: sysMsgId, content: sysMsgContent, created_at: sysMsgAt }
 
-          // Broadcast system message to widget
-          await broadcastMessage(workspace_id, convId, {
+          await broadcastToConversation(convId, {
             id: sysMsgId,
             conversation_id: convId,
             sender_type: 'system',
@@ -219,45 +268,39 @@ Deno.serve(async (req) => {
             created_at: sysMsgAt,
           })
 
-          // Notify online agents
-          Promise.allSettled([
-            notifyAgents(supabase, workspace_id, convId, visitor.name),
-          ]).catch(console.error)
+          await notifyAgents(supabase, workspace_id, convId, visitor.name)
         } else {
-          // Insert bot reply
+          // Save and broadcast bot reply
           const { data: botMsg } = await supabase.from('messages').insert({
             conversation_id: convId,
             workspace_id,
             sender_type: 'bot',
             sender_name: 'AI Assistant',
             content_type: 'text',
-            content: rag.reply,
+            content: ragReply,
           }).select('id, created_at').single()
 
           const botMsgId = botMsg?.id ?? crypto.randomUUID()
           const botMsgAt = botMsg?.created_at ?? new Date().toISOString()
+          botReply = { id: botMsgId, content: ragReply, created_at: botMsgAt }
 
-          botReply = { id: botMsgId, content: rag.reply, created_at: botMsgAt }
-
-          // Broadcast bot reply to widget immediately
-          await broadcastMessage(workspace_id, convId, {
+          await broadcastToConversation(convId, {
             id: botMsgId,
             conversation_id: convId,
             sender_type: 'bot',
             sender_name: 'AI Assistant',
-            content: rag.reply,
+            content: ragReply,
             created_at: botMsgAt,
           })
 
-          // Update AI state with context used
           await supabase.from('conversation_ai_state').update({
-            last_chunk_ids: rag.chunk_ids_used,
-            last_top_score: rag.top_score,
+            last_chunk_ids: chunkIds,
+            last_top_score: topScore,
           }).eq('conversation_id', convId)
         }
       }
     }
-    // ── END RAG ─────────────────────────────────────────────────────────────
+    // ── END AI PIPELINE ─────────────────────────────────────────────────────
 
     return json({
       message_id: message!.id,
@@ -270,6 +313,22 @@ Deno.serve(async (req) => {
     return error('Internal server error', 500)
   }
 })
+
+async function broadcastToConversation(convId: string, payload: Record<string, unknown>) {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+  await fetch(`${supabaseUrl}/realtime/v1/api/broadcast`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': serviceKey,
+      'Authorization': `Bearer ${serviceKey}`,
+    },
+    body: JSON.stringify({
+      messages: [{ topic: `conversation:${convId}`, event: 'new_message', payload }],
+    }),
+  }).catch(console.error)
+}
 
 async function handleZohoLead(
   visitor: { id: string; name: string | null; email: string | null; workspace_id: string },
@@ -289,30 +348,6 @@ async function handleZohoLead(
   })
 }
 
-async function broadcastMessage(
-  workspaceId: string,
-  convId: string,
-  payload: Record<string, unknown>,
-) {
-  const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  await fetch(`${supabaseUrl}/realtime/v1/api/broadcast`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': serviceKey,
-      'Authorization': `Bearer ${serviceKey}`,
-    },
-    body: JSON.stringify({
-      messages: [{
-        topic: `conversation:${convId}`,
-        event: 'new_message',
-        payload,
-      }],
-    }),
-  }).catch(console.error)
-}
-
 async function notifyAgents(
   supabase: ReturnType<typeof createClient>,
   workspaceId: string,
@@ -329,11 +364,11 @@ async function notifyAgents(
 
   await supabase.from('notifications').insert(
     agents.map((a) => ({
-      agent_id:        a.id,
-      workspace_id:    workspaceId,
-      type:            'new_conversation',
+      agent_id: a.id,
+      workspace_id: workspaceId,
+      type: 'new_conversation',
       conversation_id: convId,
-      message:         `New chat from ${visitorName ?? 'a visitor'}`,
+      message: `New chat from ${visitorName ?? 'a visitor'}`,
     })),
   )
 }

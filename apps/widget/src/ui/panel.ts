@@ -7,6 +7,24 @@ export interface PanelCallbacks {
   onTyping: (isTyping: boolean) => void
   onHumanRequest: () => void
   onPreChatSubmit: (data: PreChatData) => void
+  onCsat?: (rating: number) => void
+}
+
+// Tiny in-memory audio ping (data URL) — no external asset needed
+const PING_URL = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA='
+
+function playPing() {
+  try {
+    const a = new Audio(PING_URL)
+    a.volume = 0.35
+    a.play().catch(() => {/* blocked by autoplay policy — fine */})
+  } catch { /* ignore */ }
+}
+
+function formatTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  } catch { return '' }
 }
 
 export class ChatPanel {
@@ -18,14 +36,17 @@ export class ChatPanel {
   private input!: HTMLTextAreaElement
   private sendBtn!: HTMLButtonElement
   private typingEl!: HTMLDivElement
+  private typingLabel!: HTMLSpanElement
   private badge!: HTMLDivElement
   private aiIndicatorEl!: HTMLDivElement
   private humanBtn!: HTMLButtonElement
+  private csatEl!: HTMLDivElement
   private isOpen = false
   private unreadCount = 0
   private typingTimeout: ReturnType<typeof setTimeout> | null = null
   private seenIds = new Set<string>()
   private preChatDone = false
+  private csatShown = false
 
   constructor(
     private container: HTMLDivElement,
@@ -64,18 +85,26 @@ export class ChatPanel {
     this.panel.setAttribute('aria-modal', 'true')
     this.panel.setAttribute('aria-label', 'Live chat')
 
-    // Header (shared between both views)
+    // Header
     const header = document.createElement('div')
     header.className = 'edu-header'
-    header.innerHTML = `
-      <div>
-        <div class="edu-header-title">${this.workspaceName || 'Chat with us'}</div>
-        <div class="edu-header-sub">${this.preChatDone
-          ? (this.settings.greeting_text ?? 'We typically reply in a few minutes')
-          : (this.settings.prechat_subtitle ?? 'Just a few quick details to get started')
-        }</div>
-      </div>
+
+    const avatar = document.createElement('div')
+    avatar.className = 'edu-header-avatar'
+    avatar.textContent = (this.workspaceName || 'C').charAt(0).toUpperCase()
+    header.appendChild(avatar)
+
+    const headerText = document.createElement('div')
+    headerText.style.cssText = 'flex:1;min-width:0;'
+    headerText.innerHTML = `
+      <div class="edu-header-title">${this.workspaceName || 'Chat with us'}</div>
+      <div class="edu-header-sub">${this.preChatDone
+        ? (this.settings.greeting_text ?? 'We typically reply in a few minutes')
+        : (this.settings.prechat_subtitle ?? 'Just a few quick details to get started')
+      }</div>
     `
+    header.appendChild(headerText)
+
     const closeBtn = document.createElement('button')
     closeBtn.className = 'edu-header-close'
     closeBtn.setAttribute('aria-label', 'Close chat')
@@ -113,7 +142,6 @@ export class ChatPanel {
       this.switchToChat()
     }
 
-    // Allow Enter on last field to submit
     phoneInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') startBtn.click()
     })
@@ -149,11 +177,52 @@ export class ChatPanel {
     empty.innerHTML = '<div class="edu-empty-icon">💬</div><div>Send us a message and we\'ll get back to you!</div>'
     this.messagesEl.appendChild(empty)
 
+    // Typing indicator with label
+    const typingWrap = document.createElement('div')
+    typingWrap.className = 'edu-typing-wrap'
+    typingWrap.style.display = 'none'
+
+    this.typingLabel = document.createElement('span')
+    this.typingLabel.className = 'edu-typing-label'
+    this.typingLabel.textContent = 'Agent is typing'
+
     this.typingEl = document.createElement('div')
     this.typingEl.className = 'edu-typing'
-    this.typingEl.style.display = 'none'
     this.typingEl.innerHTML = '<span></span><span></span><span></span>'
-    this.messagesEl.appendChild(this.typingEl)
+
+    typingWrap.appendChild(this.typingEl)
+    typingWrap.appendChild(this.typingLabel)
+    this.messagesEl.appendChild(typingWrap)
+
+    // Store reference to the wrap for show/hide
+    ;(this as unknown as Record<string, unknown>)._typingWrap = typingWrap
+
+    // CSAT panel (hidden until conversation resolved)
+    this.csatEl = document.createElement('div')
+    this.csatEl.className = 'edu-csat'
+    this.csatEl.style.display = 'none'
+    this.csatEl.innerHTML = `
+      <div class="edu-csat-title">How was your experience?</div>
+      <div class="edu-csat-stars">
+        ${[1,2,3,4,5].map(n => `<button class="edu-star" data-rating="${n}" aria-label="${n} star">★</button>`).join('')}
+      </div>
+      <div class="edu-csat-thanks" style="display:none">Thanks for your feedback! 🙏</div>
+    `
+    this.csatEl.querySelectorAll('.edu-star').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const rating = parseInt((e.currentTarget as HTMLElement).dataset.rating ?? '0', 10)
+        this.submitCsat(rating)
+      })
+      btn.addEventListener('mouseenter', (e) => {
+        const r = parseInt((e.currentTarget as HTMLElement).dataset.rating ?? '0', 10)
+        this.csatEl.querySelectorAll('.edu-star').forEach((s, i) => {
+          s.classList.toggle('active', i < r)
+        })
+      })
+      btn.addEventListener('mouseleave', () => {
+        this.csatEl.querySelectorAll('.edu-star').forEach((s) => s.classList.remove('active'))
+      })
+    })
 
     // Input row
     const inputRow = document.createElement('div')
@@ -189,6 +258,7 @@ export class ChatPanel {
 
     this.chatView.appendChild(this.aiIndicatorEl)
     this.chatView.appendChild(this.messagesEl)
+    this.chatView.appendChild(this.csatEl)
     this.chatView.appendChild(inputRow)
 
     this.panel.appendChild(header)
@@ -234,6 +304,16 @@ export class ChatPanel {
     setTimeout(() => { this.sendBtn.disabled = false }, 500)
   }
 
+  private submitCsat(rating: number) {
+    this.csatEl.querySelectorAll('.edu-star').forEach((s, i) => {
+      s.classList.toggle('active', i < rating)
+      ;(s as HTMLButtonElement).disabled = true
+    })
+    const thanks = this.csatEl.querySelector('.edu-csat-thanks') as HTMLElement
+    if (thanks) thanks.style.display = 'block'
+    this.callbacks.onCsat?.(rating)
+  }
+
   open() {
     this.isOpen = true
     this.panel.classList.add('open')
@@ -259,39 +339,71 @@ export class ChatPanel {
     if (this.seenIds.has(msg.id)) return
     this.seenIds.add(msg.id)
 
-    // Auto-switch to chat view if still on pre-chat (shouldn't happen, but defensive)
     if (!this.preChatDone) this.switchToChat()
 
     const empty = this.messagesEl.querySelector('.edu-empty')
     if (empty) empty.remove()
 
-    const el = document.createElement('div')
-    el.className = `edu-msg ${msg.sender_type}`
+    const typingWrap = (this as unknown as Record<string, unknown>)._typingWrap as HTMLElement
 
+    // Check if conversation was resolved (system message)
+    if (msg.sender_type === 'system' && msg.content?.toLowerCase().includes('resolv') && !this.csatShown) {
+      this.showCsat()
+    }
+
+    // Outer wrap
+    const wrap = document.createElement('div')
+    wrap.className = `edu-msg-wrap ${msg.sender_type}`
+
+    // Name label (agent / bot)
     if (msg.sender_type === 'bot') {
       const label = document.createElement('div')
       label.className = 'edu-ai-label'
       label.innerHTML = '✦ AI Assistant'
-      el.appendChild(label)
-    } else if (msg.sender_name && msg.sender_type === 'agent') {
+      wrap.appendChild(label)
+    } else if (msg.sender_type === 'agent' && msg.sender_name) {
       const name = document.createElement('div')
       name.className = 'edu-msg-name'
       name.textContent = msg.sender_name
-      el.appendChild(name)
+      wrap.appendChild(name)
     }
 
-    const text = document.createElement('div')
-    text.textContent = msg.content ?? ''
-    el.appendChild(text)
+    // Bubble
+    const bubble = document.createElement('div')
+    bubble.className = `edu-msg ${msg.sender_type}`
+    bubble.textContent = msg.content ?? ''
+    wrap.appendChild(bubble)
 
-    this.messagesEl.insertBefore(el, this.typingEl)
+    // Timestamp
+    if (msg.created_at && msg.sender_type !== 'system') {
+      const time = document.createElement('div')
+      time.className = 'edu-msg-time'
+      time.textContent = formatTime(msg.created_at)
+      wrap.appendChild(time)
+    }
+
+    this.messagesEl.insertBefore(wrap, typingWrap)
     this.scrollToBottom()
 
-    if (!this.isOpen && (msg.sender_type === 'agent' || msg.sender_type === 'bot')) {
-      this.unreadCount++
-      this.badge.textContent = String(this.unreadCount)
-      this.badge.classList.add('visible')
+    // Sound + badge for incoming messages
+    if (msg.sender_type === 'agent' || msg.sender_type === 'bot') {
+      playPing()
+      if (!this.isOpen) {
+        this.unreadCount++
+        this.badge.textContent = String(this.unreadCount)
+        this.badge.classList.add('visible')
+      }
     }
+  }
+
+  showCsat() {
+    if (this.csatShown) return
+    this.csatShown = true
+    this.csatEl.style.display = 'flex'
+    // Disable input when resolved
+    this.input.disabled = true
+    this.input.placeholder = 'Conversation ended'
+    this.sendBtn.disabled = true
   }
 
   setAiMode(active: boolean) {
@@ -299,8 +411,10 @@ export class ChatPanel {
     this.input.placeholder = 'Type a message…'
   }
 
-  setAgentTyping(isTyping: boolean) {
-    this.typingEl.style.display = isTyping ? 'flex' : 'none'
+  setAgentTyping(isTyping: boolean, agentName?: string) {
+    const typingWrap = (this as unknown as Record<string, unknown>)._typingWrap as HTMLElement
+    typingWrap.style.display = isTyping ? 'flex' : 'none'
+    this.typingLabel.textContent = agentName ? `${agentName} is typing` : 'Agent is typing'
     if (isTyping) this.scrollToBottom()
   }
 

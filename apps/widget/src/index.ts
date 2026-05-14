@@ -142,6 +142,20 @@ import type { ChatMessage, PreChatData } from './types'
         onPreChatSubmit: (data: PreChatData) => {
           if (state) state.preChatData = data
         },
+        onCsat: (rating) => {
+          if (!state?.conversationId) return
+          // Fire-and-forget CSAT rating save
+          fetch(`${(window as unknown as Record<string, unknown>).__EDU_FUNCTIONS_URL__ ?? ''}/visitor-message`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              visitor_token: state.visitorToken,
+              workspace_id: state.workspaceId,
+              conversation_id: state.conversationId,
+              csat_rating: rating,
+            }),
+          }).catch(() => {})
+        },
       },
       !!initData.conversation_id, // existingConversation
     )
@@ -186,7 +200,7 @@ import type { ChatMessage, PreChatData } from './types'
     subscribe(`conversation:${convId}`, (event, payload) => {
       if (event === 'typing') {
         if (payload.sender_type === 'agent') {
-          p.setAgentTyping(payload.is_typing as boolean ?? false)
+          p.setAgentTyping(payload.is_typing as boolean ?? false, payload.agent_name as string | undefined)
         }
         return
       }
