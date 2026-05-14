@@ -5,6 +5,8 @@ import { useAuthStore } from '../../stores/authStore'
 import { Avatar } from '../../components/shared/Avatar'
 import { StatusDot } from '../../components/shared/StatusDot'
 
+const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_URL + '/functions/v1'
+
 interface AgentRow {
   id: string
   display_name: string
@@ -53,10 +55,17 @@ export default function AgentsSettings() {
     setInviting(true)
     setInviteMsg(null)
     try {
-      const { error } = await supabase.auth.admin.inviteUserByEmail(inviteEmail.trim(), {
-        data: { workspace_id: me.workspace_id, role: 'agent' },
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch(`${FUNCTIONS_URL}/invite-agent`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({ email: inviteEmail.trim() }),
       })
-      if (error) throw error
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error ?? 'Failed to send invite')
       setInviteMsg({ type: 'ok', text: `Invitation sent to ${inviteEmail.trim()}` })
       setInviteEmail('')
     } catch (err: unknown) {
