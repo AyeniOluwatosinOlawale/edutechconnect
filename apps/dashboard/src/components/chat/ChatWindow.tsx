@@ -204,8 +204,9 @@ export function ChatWindow() {
       })
     }
 
-    // Forward to Telegram if this is a Telegram conversation
-    if (convSource === 'telegram') {
+    // Forward to Telegram if this is a Telegram conversation (read source fresh to avoid stale state)
+    const { data: convData } = await supabase.from('conversations').select('source').eq('id', selectedConversationId).single()
+    if (convData?.source === 'telegram') {
       const authHeader = await getAuthHeader()
       fetch(`${FUNCTIONS_URL}/telegram-forward`, {
         method: 'POST',

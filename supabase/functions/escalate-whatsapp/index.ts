@@ -68,14 +68,11 @@ Deno.serve(async (req) => {
     if (chatId) {
       const convUrl = `${DASHBOARD_URL}/inbox`
       const visitorName = visitor?.name ?? 'Anonymous visitor'
-      const visitorEmail = visitor?.email ? `\n📧 ${visitor.email}` : ''
-      const visitorPhone = visitor?.phone ? `\n📞 ${visitor.phone}` : ''
 
       await sendMessage(
         chatId,
-        `🔔 <b>Chat Escalated</b>\n\n` +
-        `👤 <b>Visitor:</b> ${visitorName}${visitorEmail}${visitorPhone}\n` +
-        `🙋 <b>Escalated by:</b> ${agent.display_name}\n\n` +
+        `🔔 <b>New chat needs attention</b>\n\n` +
+        `👤 ${visitorName}\n\n` +
         `<a href="${convUrl}">Open in Dashboard →</a>`,
       )
     }
