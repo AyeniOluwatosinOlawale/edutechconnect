@@ -358,7 +358,7 @@ export class ChatPanel {
     if (msg.sender_type === 'bot') {
       const label = document.createElement('div')
       label.className = 'edu-ai-label'
-      label.innerHTML = '✦ AI Assistant'
+      label.innerHTML = '✦ Sarai'
       wrap.appendChild(label)
     } else if (msg.sender_type === 'agent' && msg.sender_name) {
       const name = document.createElement('div')

@@ -3,7 +3,7 @@ import { handleOptions, json, error } from '../_shared/cors.ts'
 import { createLead, searchLeads } from '../_shared/zoho.ts'
 import { createEmbedding, chatCompletion } from '../_shared/openai.ts'
 
-const DEFAULT_SYSTEM_PROMPT = `You are a helpful support assistant for an education platform.
+const DEFAULT_SYSTEM_PROMPT = `You are Sarai, a helpful AI assistant for EduTechConnect, an education platform.
 Answer the visitor's question using ONLY the context provided.
 If the answer is not in the context, say you are not sure and invite them to ask about programs, courses, fees, or enrollment.
 Keep answers concise (under 150 words). Be friendly and professional.`
@@ -162,7 +162,7 @@ Deno.serve(async (req) => {
       if (isBotActive) {
         // ── Casual greeting / acknowledgment — friendly reply, no RAG ──
         if (isCasualMessage(content.trim())) {
-          const casualPrompt = `You are a friendly AI assistant for an education platform called EduTechConnect.
+          const casualPrompt = `You are Sarai, a friendly AI assistant for an education platform called EduTechConnect.
 The visitor sent a casual message. Respond warmly in 1-2 sentences. Be welcoming and let them know you can help with programs, courses, fees, or enrollment.`
           let casualReply = 'Hello! Great to hear from you. Feel free to ask me anything about our programs, courses, fees, or how to enroll!'
           try {
@@ -174,7 +174,7 @@ The visitor sent a casual message. Respond warmly in 1-2 sentences. Be welcoming
             conversation_id: convId,
             workspace_id,
             sender_type: 'bot',
-            sender_name: 'AI Assistant',
+            sender_name: 'Sarai',
             content_type: 'text',
             content: casualReply,
           }).select('id, created_at').single()
@@ -185,7 +185,7 @@ The visitor sent a casual message. Respond warmly in 1-2 sentences. Be welcoming
 
           await broadcastToConversation(convId, {
             id: botMsgId, conversation_id: convId, sender_type: 'bot',
-            sender_name: 'AI Assistant', content: casualReply, created_at: botMsgAt,
+            sender_name: 'Sarai', content: casualReply, created_at: botMsgAt,
           })
 
           return json({
@@ -324,7 +324,7 @@ The visitor sent a casual message. Respond warmly in 1-2 sentences. Be welcoming
             conversation_id: convId,
             workspace_id,
             sender_type: 'bot',
-            sender_name: 'AI Assistant',
+            sender_name: 'Sarai',
             content_type: 'text',
             content: ragReply,
           }).select('id, created_at').single()
@@ -337,7 +337,7 @@ The visitor sent a casual message. Respond warmly in 1-2 sentences. Be welcoming
             id: botMsgId,
             conversation_id: convId,
             sender_type: 'bot',
-            sender_name: 'AI Assistant',
+            sender_name: 'Sarai',
             content: ragReply,
             created_at: botMsgAt,
           })

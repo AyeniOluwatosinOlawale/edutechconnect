@@ -99,7 +99,7 @@ import type { ChatMessage, PreChatData } from './types'
               panel?.appendMessage({
                 id: res.bot_reply.id,
                 sender_type: 'bot',
-                sender_name: 'AI Assistant',
+                sender_name: 'Sarai',
                 content: res.bot_reply.content,
                 created_at: res.bot_reply.created_at,
               })
@@ -163,7 +163,7 @@ import type { ChatMessage, PreChatData } from './types'
     // Show AI greeting + suggestion chips for new visitors
     if (!state.conversationId) {
       const greeting = initData.workspace_settings.ai_greeting_message
-        ?? 'Hi there! I am your AI assistant. Ask me about our programs, courses, fees, or enrollment process.'
+        ?? 'Hi there! I am Sarai, your AI assistant. Ask me about our programs, courses, fees, or enrollment process.'
       panel.appendMessage({
         id: `greeting-${Date.now()}`,
         sender_type: 'bot',
