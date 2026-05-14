@@ -22,6 +22,8 @@ export function ChatWindow() {
   const [convSource, setConvSource] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  // Persistent broadcast channel — subscribed once per conversation, reused for every send
+  const broadcastChanRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
 
   // Canned responses
   const [cannedResponses, setCannedResponses] = useState<CannedResponse[]>([])
@@ -77,6 +79,22 @@ export function ChatWindow() {
     document.addEventListener('mousedown', onClick)
     return () => document.removeEventListener('mousedown', onClick)
   }, [])
+
+  // Keep a persistent broadcast channel open so agent messages reach the widget instantly
+  useEffect(() => {
+    if (broadcastChanRef.current) {
+      supabase.removeChannel(broadcastChanRef.current)
+      broadcastChanRef.current = null
+    }
+    if (!selectedConversationId) return
+    const ch = supabase.channel(`conversation:${selectedConversationId}`)
+    ch.subscribe()
+    broadcastChanRef.current = ch
+    return () => {
+      supabase.removeChannel(ch)
+      broadcastChanRef.current = null
+    }
+  }, [selectedConversationId])
 
   // Fetch conversation source (widget vs telegram)
   useEffect(() => {
@@ -192,25 +210,20 @@ export function ChatWindow() {
       .eq('id', selectedConversationId)
       .eq('status', 'waiting')
 
-    // Broadcast to widget via Realtime broadcast (bypasses RLS for anon visitor)
-    if (inserted) {
-      const channel = supabase.channel(`conversation:${selectedConversationId}`)
-      channel.subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          channel.send({
-            type: 'broadcast',
-            event: 'new_message',
-            payload: {
-              id: inserted.id,
-              conversation_id: selectedConversationId,
-              sender_type: 'agent',
-              sender_name: agent.display_name,
-              content,
-              created_at: inserted.created_at,
-            },
-          }).finally(() => supabase.removeChannel(channel))
-        }
-      })
+    // Broadcast to widget via the persistent channel (already subscribed, fires instantly)
+    if (inserted && broadcastChanRef.current) {
+      broadcastChanRef.current.send({
+        type: 'broadcast',
+        event: 'new_message',
+        payload: {
+          id: inserted.id,
+          conversation_id: selectedConversationId,
+          sender_type: 'agent',
+          sender_name: agent.display_name,
+          content,
+          created_at: inserted.created_at,
+        },
+      }).catch(console.error)
     }
 
     // Forward to Telegram — always check fresh from DB to avoid state race
