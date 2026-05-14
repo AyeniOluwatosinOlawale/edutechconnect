@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, KeyboardEvent } from 'react'
-import { Send, CheckCheck, PhoneCall, Sparkles, UserCheck, Tag as TagIcon, X } from 'lucide-react'
+import { Send, CheckCheck, MessageCircle, Sparkles, UserCheck, Tag as TagIcon, X } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useMessages } from '../../hooks/useMessages'
 import { useAuthStore } from '../../stores/authStore'
@@ -301,7 +301,7 @@ export function ChatWindow() {
           onClick={escalateToWhatsApp}
           className="flex items-center gap-1.5 text-xs font-medium text-brand-600 hover:bg-brand-50 px-3 py-1.5 rounded-lg transition-colors"
         >
-          <PhoneCall size={14} /> Escalate WA
+          <MessageCircle size={14} /> Escalate
         </button>
       </div>
 
