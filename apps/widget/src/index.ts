@@ -91,7 +91,7 @@ import type { ChatMessage, PreChatData } from './types'
               subscribeConversation(res.conversation_id, panel!)
             }
 
-            // Render bot reply from HTTP response to avoid race with realtime broadcast
+            // Render bot/system reply from HTTP response to avoid realtime race condition
             if (res.bot_reply) {
               panel?.appendMessage({
                 id: res.bot_reply.id,
@@ -100,6 +100,19 @@ import type { ChatMessage, PreChatData } from './types'
                 content: res.bot_reply.content,
                 created_at: res.bot_reply.created_at,
               })
+            }
+            if (res.system_message) {
+              panel?.appendMessage({
+                id: res.system_message.id,
+                sender_type: 'system',
+                sender_name: null,
+                content: res.system_message.content,
+                created_at: res.system_message.created_at,
+              })
+              if (state?.isAiActive) {
+                state.isAiActive = false
+                panel?.setAiMode(false)
+              }
             }
           } catch (e) {
             console.error('[EduChat] Failed to send message', e)
@@ -179,7 +192,7 @@ import type { ChatMessage, PreChatData } from './types'
       }
       if (event === 'new_message') {
         const msg = payload as unknown as ChatMessage
-        if (msg.sender_type === 'agent' || msg.sender_type === 'bot') {
+        if (msg.sender_type === 'agent' || msg.sender_type === 'bot' || msg.sender_type === 'system') {
           p.appendMessage(msg)
         }
         if (msg.sender_type === 'system' && state?.isAiActive) {

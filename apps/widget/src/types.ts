@@ -33,6 +33,7 @@ export interface SendMessageResponse {
   message_id: string
   conversation_id: string
   bot_reply?: { id: string; content: string; created_at: string }
+  system_message?: { id: string; content: string; created_at: string }
 }
 
 export interface ChatMessage {

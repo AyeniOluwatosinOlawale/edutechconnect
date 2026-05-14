@@ -296,7 +296,7 @@ export class ChatPanel {
 
   setAiMode(active: boolean) {
     this.aiIndicatorEl.style.display = active ? 'flex' : 'none'
-    this.input.placeholder = active ? 'Ask AI anything… (or click "Talk to human")' : 'Type a message…'
+    this.input.placeholder = 'Type a message…'
   }
 
   setAgentTyping(isTyping: boolean) {

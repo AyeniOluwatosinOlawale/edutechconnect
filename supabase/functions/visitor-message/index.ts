@@ -59,6 +59,7 @@ Deno.serve(async (req) => {
     let convId = conversation_id
     let isNewConversation = false
     let botReply: { id: string; content: string; created_at: string } | null = null
+    let systemMessage: { id: string; content: string; created_at: string } | null = null
 
     // Create conversation if none exists
     if (!convId) {
@@ -164,13 +165,8 @@ Deno.serve(async (req) => {
           const chunkIds = (chunks ?? []).map((c: { id: string }) => c.id)
 
           if (matchErr || !chunks || chunks.length === 0 || topScore < confidenceThreshold) {
-            // Low confidence: send a soft fallback but KEEP bot active so visitor can ask again
-            rag = {
-              reply: "I'm not sure I have information on that. Feel free to ask about our programs, courses, or enrollment process!",
-              should_escalate: false,
-              top_score: topScore,
-              chunk_ids_used: chunkIds,
-            }
+            // No KB match → escalate to human agent
+            rag = { reply: null, should_escalate: true, top_score: topScore, chunk_ids_used: chunkIds }
           } else {
             // Step 3: GPT-4o completion — always use the reply, never auto-escalate
             const context = (chunks as Array<{ content: string }>).map((c) => c.content).join('\n---\n')
@@ -188,32 +184,42 @@ Deno.serve(async (req) => {
         }
 
         if (!rag || rag.should_escalate || !rag.reply) {
-          // Escalate to human
-          await supabase.from('conversation_ai_state').update({
-            is_bot_active:  false,
-            handoff_reason: 'low_confidence',
-            handed_off_at:  new Date().toISOString(),
-            last_top_score: rag?.top_score ?? 0,
-          }).eq('conversation_id', convId)
+          // Escalate to human — update AI state, conversation status, notify agents
+          await Promise.all([
+            supabase.from('conversation_ai_state').update({
+              is_bot_active:  false,
+              handoff_reason: 'low_confidence',
+              handed_off_at:  new Date().toISOString(),
+              last_top_score: rag?.top_score ?? 0,
+            }).eq('conversation_id', convId),
+            // Mark conversation as waiting so it appears in the agent inbox
+            supabase.from('conversations').update({ status: 'waiting', ai_handled: false })
+              .eq('id', convId),
+          ])
 
+          const sysMsgContent = "I'll connect you with a human agent who can help further."
           const { data: sysMsg } = await supabase.from('messages').insert({
             conversation_id: convId,
             workspace_id,
             sender_type: 'system',
-            content: 'Connecting you with a human agent…',
+            content: sysMsgContent,
           }).select('id, created_at').single()
+
+          const sysMsgId = sysMsg?.id ?? crypto.randomUUID()
+          const sysMsgAt = sysMsg?.created_at ?? new Date().toISOString()
+          systemMessage = { id: sysMsgId, content: sysMsgContent, created_at: sysMsgAt }
 
           // Broadcast system message to widget
           await broadcastMessage(workspace_id, convId, {
-            id: sysMsg?.id ?? crypto.randomUUID(),
+            id: sysMsgId,
             conversation_id: convId,
             sender_type: 'system',
             sender_name: null,
-            content: 'Connecting you with a human agent…',
-            created_at: sysMsg?.created_at ?? new Date().toISOString(),
+            content: sysMsgContent,
+            created_at: sysMsgAt,
           })
 
-          // Now notify agents
+          // Notify online agents
           Promise.allSettled([
             notifyAgents(supabase, workspace_id, convId, visitor.name),
           ]).catch(console.error)
@@ -257,6 +263,7 @@ Deno.serve(async (req) => {
       message_id: message!.id,
       conversation_id: convId,
       ...(botReply ? { bot_reply: botReply } : {}),
+      ...(systemMessage ? { system_message: systemMessage } : {}),
     })
   } catch (e) {
     console.error('visitor-message error:', e)
