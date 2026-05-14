@@ -8,15 +8,15 @@ Answer the visitor's question using ONLY the context provided.
 If the answer is not in the context, say you are not sure and invite them to ask about programs, courses, fees, or enrollment.
 Keep answers concise (under 150 words). Be friendly and professional.`
 
-const HUMAN_REQUEST_PATTERNS = [
-  /\bhuman\b/i, /\bagent\b/i, /\bperson\b/i, /\breal person\b/i,
-  /talk to (a |an |)(human|agent|person|someone|staff)/i,
-  /speak to (a |an |)(human|agent|person|someone|staff)/i,
-  /connect me (to|with)/i, /\blive (agent|support|chat)\b/i,
-]
-
+// Only escalate when user makes a clear, direct request for a human
 function wantsHuman(text: string): boolean {
-  return HUMAN_REQUEST_PATTERNS.some((p) => p.test(text))
+  const t = text.toLowerCase().trim()
+  return (
+    t === 'human' ||
+    t === 'agent' ||
+    /^(i want|i need|can i (speak|talk|chat)|connect me|transfer me).*(human|agent|person|someone|staff)/i.test(t) ||
+    /^(speak|talk|chat) (to|with) (a |an |)(human|agent|person|real person|live agent)/i.test(t)
+  )
 }
 
 Deno.serve(async (req) => {
