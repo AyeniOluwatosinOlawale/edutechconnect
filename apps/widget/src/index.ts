@@ -64,12 +64,21 @@ import type { ChatMessage, PreChatData } from './types'
         onSend: async (text) => {
           if (!state) return
           try {
+            // Show visitor message immediately before awaiting the API — correct order
+            const tempId = `opt-${Date.now()}`
+            panel?.appendMessage({
+              id: tempId,
+              sender_type: 'visitor',
+              sender_name: null,
+              content: text,
+              created_at: new Date().toISOString(),
+            })
+
             const res = await sendMessage({
               visitor_token: state.visitorToken,
               workspace_id: state.workspaceId,
               content: text,
               conversation_id: state.conversationId,
-              // Send pre-chat details on the first message only
               ...(!state.preChatSent && state.preChatData ? {
                 visitor_name: state.preChatData.name,
                 visitor_email: state.preChatData.email,
@@ -79,19 +88,13 @@ import type { ChatMessage, PreChatData } from './types'
             state.preChatSent = true
             state.conversationId = res.conversation_id
 
-            panel?.appendMessage({
-              id: res.message_id,
-              sender_type: 'visitor',
-              sender_name: null,
-              content: text,
-              created_at: new Date().toISOString(),
-            })
+            // Mark the real DB message ID as seen so the server broadcast doesn't duplicate it
+            panel?.markSeen(res.message_id)
 
             if (!subscribedConvIds.has(res.conversation_id)) {
               subscribeConversation(res.conversation_id, panel!)
             }
 
-            // Render bot/system reply from HTTP response to avoid realtime race condition
             if (res.bot_reply) {
               panel?.appendMessage({
                 id: res.bot_reply.id,

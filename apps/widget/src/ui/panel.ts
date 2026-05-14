@@ -396,6 +396,10 @@ export class ChatPanel {
     }
   }
 
+  markSeen(id: string) {
+    this.seenIds.add(id)
+  }
+
   showCsat() {
     if (this.csatShown) return
     this.csatShown = true
