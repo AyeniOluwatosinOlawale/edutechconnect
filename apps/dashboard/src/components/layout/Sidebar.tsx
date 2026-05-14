@@ -1,5 +1,7 @@
+import { useState, useRef, useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
 import { MessageSquare, Users, History, BookUser, BarChart3, Settings, LogOut } from 'lucide-react'
+import { supabase } from '../../lib/supabase'
 import { useAuthStore } from '../../stores/authStore'
 import { Avatar } from '../shared/Avatar'
 import { StatusDot } from '../shared/StatusDot'
@@ -14,9 +16,34 @@ const nav = [
   { to: '/settings', icon: Settings, label: 'Settings' },
 ]
 
+const STATUS_OPTIONS = [
+  { value: 'online', label: 'Online', color: 'bg-green-500' },
+  { value: 'busy', label: 'Busy', color: 'bg-yellow-500' },
+  { value: 'offline', label: 'Offline', color: 'bg-slate-400' },
+] as const
+
 export function Sidebar() {
-  const { agent, logout } = useAuthStore()
+  const { agent, setAgent, logout } = useAuthStore()
   const { unreadCount } = useNotifications()
+  const [showStatusMenu, setShowStatusMenu] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowStatusMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', onClick)
+    return () => document.removeEventListener('mousedown', onClick)
+  }, [])
+
+  async function setStatus(status: 'online' | 'busy' | 'offline') {
+    if (!agent) return
+    setShowStatusMenu(false)
+    await supabase.from('agents').update({ status }).eq('id', agent.id)
+    setAgent({ ...agent, status })
+  }
 
   return (
     <aside className="w-16 bg-brand-600 flex flex-col items-center py-4 gap-1 flex-shrink-0">
@@ -48,11 +75,33 @@ export function Sidebar() {
 
       <div className="mt-auto flex flex-col items-center gap-3">
         {agent && (
-          <div className="relative">
-            <Avatar name={agent.display_name} url={agent.avatar_url} size="sm" />
-            <span className="absolute -bottom-0.5 -right-0.5">
-              <StatusDot status={agent.status} />
-            </span>
+          <div className="relative" ref={menuRef}>
+            <button
+              onClick={() => setShowStatusMenu((v) => !v)}
+              title="Change status"
+              className="relative focus:outline-none"
+            >
+              <Avatar name={agent.display_name} url={agent.avatar_url} size="sm" />
+              <span className="absolute -bottom-0.5 -right-0.5">
+                <StatusDot status={agent.status} />
+              </span>
+            </button>
+
+            {showStatusMenu && (
+              <div className="absolute bottom-12 left-0 bg-white rounded-xl shadow-xl border border-slate-100 py-1 w-32 z-50">
+                <p className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{agent.display_name}</p>
+                {STATUS_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setStatus(opt.value)}
+                    className={`flex items-center gap-2 w-full px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors ${agent.status === opt.value ? 'font-semibold' : ''}`}
+                  >
+                    <span className={`w-2 h-2 rounded-full ${opt.color}`} />
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
         <button

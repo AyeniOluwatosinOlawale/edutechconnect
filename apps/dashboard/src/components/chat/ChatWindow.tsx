@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, KeyboardEvent } from 'react'
-import { Send, CheckCheck, PhoneCall, Sparkles, UserCheck } from 'lucide-react'
+import { Send, CheckCheck, PhoneCall, Sparkles, UserCheck, Tag as TagIcon, X } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useMessages } from '../../hooks/useMessages'
 import { useAuthStore } from '../../stores/authStore'
@@ -9,6 +9,9 @@ import { EmptyState } from '../shared/EmptyState'
 
 const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_URL + '/functions/v1'
 
+interface CannedResponse { id: string; shortcut: string; title: string; content: string }
+interface ConvTag { id: string; name: string; color: string }
+
 export function ChatWindow() {
   const { selectedConversationId } = useChatStore()
   const { agent } = useAuthStore()
@@ -17,10 +20,62 @@ export function ChatWindow() {
   const [sending, setSending] = useState(false)
   const [isAiActive, setIsAiActive] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Canned responses
+  const [cannedResponses, setCannedResponses] = useState<CannedResponse[]>([])
+  const [cannedQuery, setCannedQuery] = useState('')
+  const [showCanned, setShowCanned] = useState(false)
+  const [cannedIndex, setCannedIndex] = useState(0)
+
+  // Tags
+  const [allTags, setAllTags] = useState<ConvTag[]>([])
+  const [convTags, setConvTags] = useState<ConvTag[]>([])
+  const [showTagMenu, setShowTagMenu] = useState(false)
+  const tagMenuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // Load canned responses once
+  useEffect(() => {
+    if (!agent) return
+    supabase.from('canned_responses').select('id, shortcut, title, content')
+      .eq('workspace_id', agent.workspace_id).order('shortcut')
+      .then(({ data }) => setCannedResponses((data as CannedResponse[]) ?? []))
+  }, [agent])
+
+  // Load all workspace tags once
+  useEffect(() => {
+    if (!agent) return
+    supabase.from('tags').select('id, name, color').eq('workspace_id', agent.workspace_id)
+      .order('name').then(({ data }) => setAllTags((data as ConvTag[]) ?? []))
+  }, [agent])
+
+  // Load tags for selected conversation
+  useEffect(() => {
+    if (!selectedConversationId) { setConvTags([]); return }
+    supabase.from('conversation_tags').select('tags(id, name, color)')
+      .eq('conversation_id', selectedConversationId)
+      .then(({ data }) => {
+        const tags = (data ?? []).flatMap((r: { tags: ConvTag | ConvTag[] | null }) =>
+          Array.isArray(r.tags) ? r.tags : r.tags ? [r.tags] : []
+        ) as ConvTag[]
+        setConvTags(tags)
+      })
+  }, [selectedConversationId])
+
+  // Close tag menu on outside click
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (tagMenuRef.current && !tagMenuRef.current.contains(e.target as Node)) {
+        setShowTagMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', onClick)
+    return () => document.removeEventListener('mousedown', onClick)
+  }, [])
 
   // Fetch AI state for selected conversation
   useEffect(() => {
@@ -47,6 +102,43 @@ export function ChatWindow() {
 
     return () => { supabase.removeChannel(channel) }
   }, [selectedConversationId])
+
+  const filteredCanned = cannedResponses.filter((c) =>
+    c.shortcut.toLowerCase().includes(cannedQuery.toLowerCase()) ||
+    c.title.toLowerCase().includes(cannedQuery.toLowerCase())
+  )
+
+  function handleTextChange(val: string) {
+    setText(val)
+    const slashMatch = val.match(/^\/(\S*)$/)
+    if (slashMatch) {
+      setCannedQuery(slashMatch[1])
+      setShowCanned(true)
+      setCannedIndex(0)
+    } else {
+      setShowCanned(false)
+      setCannedQuery('')
+    }
+  }
+
+  function applyCanned(item: CannedResponse) {
+    setText(item.content)
+    setShowCanned(false)
+    setTimeout(() => textareaRef.current?.focus(), 0)
+  }
+
+  async function toggleTag(tag: ConvTag) {
+    if (!selectedConversationId) return
+    const exists = convTags.some((t) => t.id === tag.id)
+    if (exists) {
+      await supabase.from('conversation_tags').delete()
+        .eq('conversation_id', selectedConversationId).eq('tag_id', tag.id)
+      setConvTags((prev) => prev.filter((t) => t.id !== tag.id))
+    } else {
+      await supabase.from('conversation_tags').insert({ conversation_id: selectedConversationId, tag_id: tag.id })
+      setConvTags((prev) => [...prev, tag])
+    }
+  }
 
   if (!selectedConversationId) {
     return (
@@ -154,7 +246,43 @@ export function ChatWindow() {
             <Sparkles size={11} /> AI Active
           </span>
         )}
-        <span className="text-sm font-medium text-slate-700 flex-1" />
+        {/* Conversation tags */}
+        <div className="flex items-center gap-1 flex-1 flex-wrap">
+          {convTags.map((t) => (
+            <span
+              key={t.id}
+              className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full text-white font-medium cursor-pointer"
+              style={{ background: t.color || '#6366f1' }}
+              onClick={() => toggleTag(t)}
+            >
+              {t.name} <X size={10} />
+            </span>
+          ))}
+          {allTags.length > 0 && (
+            <div className="relative" ref={tagMenuRef}>
+              <button
+                onClick={() => setShowTagMenu((v) => !v)}
+                className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600 px-1.5 py-0.5 rounded-lg hover:bg-slate-100 transition-colors"
+              >
+                <TagIcon size={12} /> Tag
+              </button>
+              {showTagMenu && (
+                <div className="absolute top-7 left-0 bg-white border border-slate-200 rounded-xl shadow-lg py-1 z-20 min-w-36">
+                  {allTags.map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => toggleTag(t)}
+                      className={`flex items-center gap-2 w-full px-3 py-1.5 text-xs hover:bg-slate-50 transition-colors ${convTags.some((ct) => ct.id === t.id) ? 'font-semibold' : ''}`}
+                    >
+                      <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: t.color || '#6366f1' }} />
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
         {isAiActive && (
           <button
             onClick={handleTakeOver}
@@ -198,12 +326,42 @@ export function ChatWindow() {
       </div>
 
       {/* Input */}
-      <div className="border-t border-slate-100 p-3 flex items-end gap-2">
+      <div className="border-t border-slate-100 p-3 flex items-end gap-2 relative">
+        {/* Canned responses popup */}
+        {showCanned && filteredCanned.length > 0 && (
+          <div className="absolute bottom-full left-3 right-3 mb-1 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden z-20">
+            <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wide border-b border-slate-100">
+              Canned Responses — type more to filter
+            </div>
+            {filteredCanned.map((item, i) => (
+              <button
+                key={item.id}
+                onMouseDown={() => applyCanned(item)}
+                className={`flex items-start gap-3 w-full px-3 py-2 text-left hover:bg-slate-50 transition-colors ${i === cannedIndex ? 'bg-brand-50' : ''}`}
+              >
+                <span className="text-xs font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded flex-shrink-0 mt-0.5">{item.shortcut}</span>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-slate-700 truncate">{item.title}</div>
+                  <div className="text-xs text-slate-400 truncate">{item.content}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
         <textarea
+          ref={textareaRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder={isAiActive ? 'AI is handling this chat — type to override…' : 'Type a message… (Enter to send)'}
+          onChange={(e) => handleTextChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (showCanned && filteredCanned.length > 0) {
+              if (e.key === 'ArrowDown') { e.preventDefault(); setCannedIndex((i) => Math.min(i + 1, filteredCanned.length - 1)); return }
+              if (e.key === 'ArrowUp') { e.preventDefault(); setCannedIndex((i) => Math.max(i - 1, 0)); return }
+              if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); applyCanned(filteredCanned[cannedIndex]); return }
+              if (e.key === 'Escape') { setShowCanned(false); return }
+            }
+            onKeyDown(e as KeyboardEvent<HTMLTextAreaElement>)
+          }}
+          placeholder={isAiActive ? 'AI is handling this chat — type to override… (/ for canned)' : 'Type a message… (/ for canned responses)'}
           rows={1}
           className="flex-1 resize-none border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-brand-400 transition-colors max-h-32 overflow-y-auto"
           style={{ height: 'auto' }}
