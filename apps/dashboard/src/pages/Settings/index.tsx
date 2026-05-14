@@ -3,6 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom'
 const tabs = [
   { to: '/settings/widget', label: 'Widget' },
   { to: '/settings/agents', label: 'Agents' },
+  { to: '/settings/tags', label: 'Tags' },
   { to: '/settings/canned', label: 'Canned Responses' },
   { to: '/settings/knowledge-base', label: '✨ Knowledge Base' },
   { to: '/settings/integrations', label: 'Integrations' },
