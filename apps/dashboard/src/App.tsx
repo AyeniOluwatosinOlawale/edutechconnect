@@ -15,6 +15,7 @@ import CannedResponses from './pages/Settings/CannedResponses'
 import Integrations from './pages/Settings/Integrations'
 import KnowledgeBase from './pages/Settings/KnowledgeBase'
 import AgentsSettings from './pages/Settings/Agents'
+import TagsSettings from './pages/Settings/Tags'
 
 function RequireAuth({ children }: { children: React.ReactElement }) {
   const { user, loading } = useAuthStore()
@@ -85,6 +86,7 @@ export default function App() {
             <Route index element={<Navigate to="/settings/widget" replace />} />
             <Route path="widget" element={<WidgetSettings />} />
             <Route path="agents" element={<AgentsSettings />} />
+            <Route path="tags" element={<TagsSettings />} />
             <Route path="canned" element={<CannedResponses />} />
             <Route path="knowledge-base" element={<KnowledgeBase />} />
             <Route path="integrations" element={<Integrations />} />
